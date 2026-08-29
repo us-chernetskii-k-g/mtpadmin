@@ -39,7 +39,7 @@
 
 Все production-значения создаются локально на сервере.
 
-## Структура
+## Планируемая структура
 
 ```text
 src/mtpadmin                 основной CLI
@@ -47,6 +47,8 @@ src/stats_collector.py       сборщик статистики
 src/user_config.py           безопасное редактирование access users
 scripts/render_config.sh     применение настроек в config.toml
 scripts/geo_update.sh        обновление локальных DB-IP Lite MMDB
+web/                         лёгкая web-панель
+install.sh                   clean install
 ```
 
 ## GeoIP
@@ -57,6 +59,6 @@ DB-IP Lite распространяется по лицензии CC BY 4.0. С�
 
 ## Статус проекта
 
-Текущая production-ветка: **0.4.3**. Исходники перенесены из рабочего экземпляра DEIMOS без production secrets и клиентских данных.
+Рабочий production-инстанс сейчас использует MTPADMIN **0.4.3**. Этот репозиторий инициализирован как новый самостоятельный upstream; production secrets и клиентские данные в него не переносятся.
 
-Clean install / web UI будут добавлены следующими коммитами.
+Следующими коммитами будут добавлены актуальные исходники, clean installer и web UI.
