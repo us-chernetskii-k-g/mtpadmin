@@ -1,0 +1,35 @@
+# Local/runtime secrets
+.env
+*.env
+state.env
+config.toml
+stats_salt
+*.secret
+*.key
+
+# Databases / client data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.mmdb
+*.csv
+*.log
+
+# Backups
+backup/
+backups/
+*.bak
+*.backup
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*~
