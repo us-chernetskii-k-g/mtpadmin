@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
-VERSION='0.5.0'
+VERSION='0.5.1'
 RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'
 STATE='/etc/mtpadmin/state.env'
 STATSSVC='mtpadmin-stats.service'
 SERVICE='mtpadmin-telemt.service'
 WEBSVC='mtpadmin-web.service'
+WEBSVC_FILE='/etc/systemd/system/mtpadmin-web.service'
 WEBAPP='/usr/local/lib/mtpadmin/web/mtpadmin_web.py'
 STAMP=$(date +%Y%m%d-%H%M%S)
 BACKUP="/var/backups/mtpadmin/repo-update-$STAMP"
@@ -26,6 +27,7 @@ for f in \
  /usr/local/lib/mtpadmin/render_config.sh \
  /usr/local/lib/mtpadmin/geo_update.sh \
  "$WEBAPP" \
+ "$WEBSVC_FILE" \
  "$STATE"; do
   [[ -e "$f" ]] && cp -a "$f" "$BACKUP/$(basename "$f").before"
 done
@@ -34,7 +36,7 @@ ok "Backup: $BACKUP"
 
 fetch(){ curl -fsSL --retry 3 "$RAW_BASE/$1" -o "$2" || die "Не удалось скачать $1"; }
 : > "$TMP/mtpadmin"
-for part in 00-core.sh 10-sources.sh 20-admin.sh 30-menu.sh; do
+for part in 00-core.sh 10-sources.sh 20-admin.sh 25-doctor-runtime.sh 30-menu.sh; do
   curl -fsSL --retry 3 "$RAW_BASE/src/mtpadmin.d/$part" >> "$TMP/mtpadmin" || die "Не удалось скачать CLI fragment $part"
 done
 : > "$TMP/stats_collector.py"
@@ -69,6 +71,15 @@ install -m 0700 "$TMP/geo_update.sh" /usr/local/lib/mtpadmin/geo_update.sh
 if (( WEB_INSTALLED == 1 )); then
   install -d -m 0755 /usr/local/lib/mtpadmin/web
   install -m 0700 "$TMP/mtpadmin_web.py" "$WEBAPP"
+
+  # ss/iproute2 require AF_NETLINK. Keep every other web sandbox restriction.
+  if [[ -f "$WEBSVC_FILE" ]]; then
+    if grep -q '^RestrictAddressFamilies=' "$WEBSVC_FILE"; then
+      sed -i 's/^RestrictAddressFamilies=.*/RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK/' "$WEBSVC_FILE"
+    else
+      sed -i '/^\[Service\]/a RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK' "$WEBSVC_FILE"
+    fi
+  fi
 fi
 
 python3 - <<'PY'
@@ -78,9 +89,9 @@ s=p.read_text()
 lines=[]; done=False
 for line in s.splitlines():
     if line.startswith('MTPADMIN_VERSION='):
-        lines.append("MTPADMIN_VERSION='0.5.0'"); done=True
+        lines.append("MTPADMIN_VERSION='0.5.1'"); done=True
     else: lines.append(line)
-if not done: lines.append("MTPADMIN_VERSION='0.5.0'")
+if not done: lines.append("MTPADMIN_VERSION='0.5.1'")
 p.write_text('\n'.join(lines)+'\n')
 PY
 chmod 0600 "$STATE"
@@ -92,6 +103,8 @@ rollback_core(){
   [[ -f "$BACKUP/render_config.sh.before" ]] && cp -a "$BACKUP/render_config.sh.before" /usr/local/lib/mtpadmin/render_config.sh
   [[ -f "$BACKUP/geo_update.sh.before" ]] && cp -a "$BACKUP/geo_update.sh.before" /usr/local/lib/mtpadmin/geo_update.sh
   [[ -f "$BACKUP/state.env.before" ]] && cp -a "$BACKUP/state.env.before" "$STATE"
+  [[ -f "$BACKUP/mtpadmin-web.service.before" ]] && cp -a "$BACKUP/mtpadmin-web.service.before" "$WEBSVC_FILE"
+  systemctl daemon-reload || true
 }
 
 if ! systemctl restart "$STATSSVC"; then
@@ -102,11 +115,12 @@ if ! systemctl restart "$STATSSVC"; then
 fi
 
 if (( WEB_INSTALLED == 1 )); then
+  systemctl daemon-reload
   if ! systemctl restart "$WEBSVC"; then
     warn 'Новый web backend не запустился — возвращаю предыдущую web-версию'
     [[ -f "$BACKUP/mtpadmin_web.py.before" ]] && cp -a "$BACKUP/mtpadmin_web.py.before" "$WEBAPP"
-    systemctl restart "$WEBSVC" || true
     rollback_core
+    systemctl restart "$WEBSVC" || true
     systemctl restart "$STATSSVC" || true
     die 'Обновление отменено.'
   fi
@@ -114,8 +128,8 @@ if (( WEB_INSTALLED == 1 )); then
   curl -fsS --max-time 5 -H 'X-MTPADMIN-User: local-health' http://127.0.0.1:9199/healthz >/dev/null || {
     warn 'Web healthcheck failed — rollback'
     [[ -f "$BACKUP/mtpadmin_web.py.before" ]] && cp -a "$BACKUP/mtpadmin_web.py.before" "$WEBAPP"
-    systemctl restart "$WEBSVC" || true
     rollback_core
+    systemctl restart "$WEBSVC" || true
     systemctl restart "$STATSSVC" || true
     die 'Обновление отменено.'
   }
