@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.0'
+VERSION='0.11.1'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
@@ -18,6 +18,8 @@ info(){ echo "[INFO] $*"; }
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'Запустите через sudo/root.'
 [[ -f "$STATE" ]] || die 'Сначала установите MTPADMIN.'
+command -v caddy >/dev/null 2>&1 || die 'Caddy не найден. Clean install.sh устанавливает его автоматически.'
+[[ -f "$CADDYFILE" ]] || die "Не найден $CADDYFILE"
 
 get_update(){
   local dst="$1"
@@ -25,7 +27,7 @@ get_update(){
   chmod 0700 "$dst"; bash -n "$dst"
 }
 
-if [[ -f "$CADDYFILE" ]] && grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
+if grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
   info 'Веб-панель уже установлена — выполняю обычное бесшовное обновление.'
   get_update "$TMP/update-existing.sh"
   bash "$TMP/update-existing.sh"
@@ -33,7 +35,9 @@ if [[ -f "$CADDYFILE" ]] && grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB
   exit 0
 fi
 
-info 'Проверяю и обновляю ядро MTPADMIN...'
+# Core and WEB Proxy may be updated before the first panel is created; Caddy is
+# already present at this point, so WEB Proxy can safely provision its own host.
+info 'Обновляю ядро и подготавливаю Telegram WEB Proxy...'
 get_update "$TMP/update.sh"
 bash "$TMP/update.sh"
 
@@ -45,7 +49,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.11.0'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.11.1'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -55,8 +59,8 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh"
 bash "$TMP/base-web-install.sh"
 
-info 'Перевожу веб-панель на бесшовную blue/green схему и поднимаю WEB Proxy...'
+info 'Перевожу веб-панель на бесшовную blue/green схему...'
 get_update "$TMP/update-after-web.sh"
 bash "$TMP/update-after-web.sh"
 
-ok "MTPADMIN Web $VERSION готов. Последующие обновления используют blue/green; WEB Proxy управляется MTPADMIN; autoban=OFF."
+ok "MTPADMIN Web $VERSION готов. Blue/green, Update Center и Telegram WEB Proxy включены; autoban=OFF."
