@@ -52,6 +52,11 @@ jobs:
         run: |
           python3 - <<'PY'
           import importlib.util
+          import sqlite3
+          import tempfile
+          import time
+          from pathlib import Path
+
           spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py')
           g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
           assert g.duration('permanent')[0] is None
@@ -63,6 +68,22 @@ jobs:
           assert 'blocked4_perm' in text and 'seen4' in text
           assert 'policy accept' in text
           assert 'autoban' not in text.lower()
+
+          # A client previously accepted by TeleMT must stay trusted for the
+          # configured raw-IP retention period even after it disconnects.
+          with tempfile.TemporaryDirectory() as td:
+              g.DB=Path(td)/'stats.db'
+              now=int(time.time())
+              with sqlite3.connect(g.DB) as c:
+                  c.execute('CREATE TABLE clients(ip TEXT,last_seen INTEGER)')
+                  c.execute('INSERT INTO clients VALUES(?,?)',('1.1.1.1',now-60))
+                  c.execute('INSERT INTO clients VALUES(?,?)',('8.8.8.8',now-10*86400))
+              g.api=lambda _path: []
+              g.state=lambda: {'RETENTION_DAYS':'7'}
+              known=g.valid()
+              assert '1.1.1.1' in known
+              assert '8.8.8.8' not in known
+
           print('Scanner Guard unit checks PASS')
           PY
 
