@@ -104,12 +104,19 @@ def period_bounds(p):
 
 
 def query(sql, params=()):
+    con = None
     try:
-        with db_connect() as con:
-            con.row_factory = sqlite3.Row
-            return [dict(r) for r in con.execute(sql, params).fetchall()]
+        con = db_connect()
+        con.row_factory = sqlite3.Row
+        return [dict(r) for r in con.execute(sql, params).fetchall()]
     except Exception:
         return []
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except Exception:
+                pass
 
 
 def scalar(sql, params=(), default=0):
