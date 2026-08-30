@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.8.0'
+VERSION='0.8.1'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
@@ -25,8 +25,6 @@ get_update(){
   chmod 0700 "$dst"; bash -n "$dst"
 }
 
-# Idempotent path: if MTPADMIN already owns the Caddy block, never recreate
-# credentials/vhost. Just use the normal blue/green updater.
 if [[ -f "$CADDYFILE" ]] && grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
   info 'Веб-панель уже установлена — выполняю обычное бесшовное обновление.'
   get_update "$TMP/update-existing.sh"
@@ -35,14 +33,10 @@ if [[ -f "$CADDYFILE" ]] && grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB
   exit 0
 fi
 
-# Bring core to the current generation before the first web installation.
 info 'Проверяю и обновляю ядро MTPADMIN...'
 get_update "$TMP/update.sh"
 bash "$TMP/update.sh"
 
-# Reuse the battle-tested interactive Caddy/auth installer only for the first
-# login/password/vhost creation. It starts a legacy 9199 backend; immediately
-# afterwards update.sh converts it to permanent blue/green slots.
 curl -fsSL --retry 3 "$ROOT/$BASE_COMMIT/web-install.sh" -o "$TMP/base-web-install.sh" || die 'Не удалось скачать базовый web-installer.'
 python3 - "$TMP/base-web-install.sh" <<'PY'
 from pathlib import Path
@@ -51,7 +45,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.8.0'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.8.1'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -61,8 +55,6 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh"
 bash "$TMP/base-web-install.sh"
 
-# Convert the just-created legacy backend to blue/green. The old backend stays
-# alive until the candidate is healthy and Caddy has switched successfully.
 info 'Перевожу веб-панель на бесшовную blue/green схему...'
 get_update "$TMP/update-after-web.sh"
 bash "$TMP/update-after-web.sh"
