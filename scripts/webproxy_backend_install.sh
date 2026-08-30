@@ -69,9 +69,21 @@ if [[ ! -x "$MTPROXY_DIR/objs/bin/mtproto-proxy" || "$current" != "$MTPROXY_COMM
   install -d -o mtproxy -g mtproxy -m 0755 "$build"
   tar -C "$build" --strip-components=1 -xzf "$archive"
   chown -R mtproxy:mtproxy "$build"
+
+  # mktemp creates TMP as 0700/root. The unprivileged build user must be able
+  # to traverse the parent directory while make works inside its own tree.
+  chmod 0711 "$TMP"
   runuser -u mtproxy -- make -C "$build" -j1 >/dev/null
+  chmod 0700 "$TMP"
+
   [[ -x "$build/objs/bin/mtproto-proxy" ]] || die 'Official MTProxy binary не собрался.'
   chown -R root:root "$build"
+
+  # make runs under installer umask 077, so generated objs directories and the
+  # binary can be 0700. systemd later runs the service as User=mtproxy.
+  find "$build/objs" -type d -exec chmod 0755 {} +
+  chmod 0755 "$build/objs/bin/mtproto-proxy"
+
   if [[ -e "$MTPROXY_DIR" ]]; then mv "$MTPROXY_DIR" "$MTPROXY_DIR.before-mtpadmin.$(date +%Y%m%d%H%M%S)"; fi
   mv "$build" "$MTPROXY_DIR"
   printf '%s\n' "$MTPROXY_COMMIT" > "$MARKER"
@@ -143,7 +155,7 @@ ProtectProc=invisible
 ProtectSystem=strict
 ProcSubset=pid
 ReadOnlyPaths=/etc/mtproxy
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
