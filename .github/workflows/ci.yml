@@ -1,0 +1,39 @@
+name: MTPADMIN CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble runtime files
+        run: |
+          cat src/mtpadmin.d/*.sh > /tmp/mtpadmin
+          cat src/stats_collector.d/*.py > /tmp/stats_collector.py
+
+      - name: Bash syntax
+        run: |
+          bash -n /tmp/mtpadmin
+          bash -n install.sh
+          bash -n update.sh
+          bash -n scripts/render_config.sh
+          bash -n scripts/geo_update.sh
+
+      - name: Python syntax
+        run: |
+          python3 -m py_compile /tmp/stats_collector.py
+          python3 -m py_compile src/user_config.py
+
+      - name: Guard against committed production secrets
+        run: |
+          if grep -RInE --exclude-dir=.git --exclude='ci.yml' '(ee6d61782e727525f37068b87cdc897d|bbd76513a94903a1545f655f8c3625bb|64\.188\.62\.153)' .; then
+            echo 'Production value detected in repository'
+            exit 1
+          fi
