@@ -2,110 +2,150 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.7'
+VERSION='0.11.8'
 BASE_0116_COMMIT='36c0a0e1ad6d21404922c15842fc357b339e6f7f'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
+RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 die(){ echo "[FAIL] $*" >&2; exit 1; }
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
+warn(){ echo "[WARN] $*"; }
 
 curl -fsSL --retry 3 "$ROOT/$BASE_0116_COMMIT/update.sh" -o "$TMP/update-0116.sh" || die 'Не удалось скачать базовый update 0.11.6.'
+
 python3 - "$TMP/update-0116.sh" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
-if "VERSION='0.11.6'" not in s:
-    raise SystemExit('unexpected immutable 0.11.6 updater')
-s=s.replace('0.11.6','0.11.7')
+if "VERSION='0.11.6'" not in s: raise SystemExit('unexpected immutable 0.11.6 updater')
+s=s.replace('0.11.6','0.11.8')
+
+# The immutable 0.11.6 wrapper transforms 0.9.0. Inject the new CLI fragment into
+# that transformation so the generated blue/green runtime contains the audited
+# source lifecycle instead of merely shipping the file in the repository.
+needle="s=s.replace('0.9.0','0.11.8')\n"
+insert=(needle+"s=s.replace('for part in 00-core.sh 10-sources.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do',"
+              "'for part in 00-core.sh 10-sources.sh 11-source-stability.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do',1)\n")
+if s.count(needle)!=1: raise SystemExit('0.11.6 nested transform marker not found')
+s=s.replace(needle,insert,1)
+
+# Add 0.11.8 stability/DB extensions after the compact links extension.
+old='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'
+  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" <<'PYWEBEXT'
+'''
+new='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'
+  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/42-stability.py" -o "$TMP/stability-extension.py" || die 'Не удалось скачать stability extension'
+  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/43-db-safety.py" -o "$TMP/db-safety-extension.py" || die 'Не удалось скачать DB safety extension'
+  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" "$TMP/stability-extension.py" "$TMP/db-safety-extension.py" <<'PYWEBEXT'
+'''
+if s.count(old)!=1: raise SystemExit('0.11.6 web extension block not found')
+s=s.replace(old,new,1)
+s=s.replace('for marker in 38-operations.py 39-compact-ui.py 40-async-update-ui.py 41-webproxy-links-ui.py; do',
+            'for marker in 38-operations.py 39-compact-ui.py 40-async-update-ui.py 41-webproxy-links-ui.py 42-stability.py 43-db-safety.py; do',1)
 p.write_text(s,encoding='utf-8')
 PY
-bash -n "$TMP/update-0116.sh" || die '0.11.7 сформировал невалидный updater.'
-grep -q "VERSION='0.11.7'" "$TMP/update-0116.sh" || die 'Версия updater не обновилась.'
+
+bash -n "$TMP/update-0116.sh" || die '0.11.8 сформировал невалидный updater.'
+grep -q "VERSION='0.11.8'" "$TMP/update-0116.sh" || die 'Версия updater не обновилась.'
+grep -q '11-source-stability.sh' "$TMP/update-0116.sh" || die 'Source stability CLI не встроен.'
+grep -q '42-stability.py' "$TMP/update-0116.sh" || die 'Web stability extension не встроен.'
+grep -q '43-db-safety.py' "$TMP/update-0116.sh" || die 'DB safety extension не встроен.'
 
 case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
   2)
     MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-0116.sh" || die 'Вложенная сборка update-engine не прошла.'
+    [[ ! -f scripts/webproxy_install.sh ]] || bash -n scripts/webproxy_install.sh
     [[ ! -f scripts/webproxy_backend_install.sh ]] || bash -n scripts/webproxy_backend_install.sh
-    ok 'Nested 0.11.7 updater transformation PASS'
-    exit 0
-    ;;
+    ok 'Nested 0.11.8 updater transformation PASS'; exit 0 ;;
   1)
     MTPADMIN_BOOTSTRAP_TEST=1 bash "$TMP/update-0116.sh" || die 'Update wrapper test не прошёл.'
-    [[ ! -f scripts/webproxy_backend_install.sh ]] || bash -n scripts/webproxy_backend_install.sh
-    ok 'Update wrapper 0.11.7 transformation PASS'
-    exit 0
-    ;;
+    ok 'Update wrapper 0.11.8 transformation PASS'; exit 0 ;;
 esac
 
-# First update MTPADMIN/web/relay with the already proven 0.11.6 engine,
-# transformed only for the new product version.
+# Proven blue/green engine, now transformed to assemble audited 0.11.8 fragments.
 bash "$TMP/update-0116.sh"
 
 CACHE_BUST="${VERSION}-$(date +%s)"
-curl -fsSL --retry 3 "$ROOT/main/scripts/webproxy_backend_install.sh?mtpadmin=$CACHE_BUST" -o "$TMP/webproxy_backend_install.sh" \
-  || die 'Не удалось скачать WEB Proxy official MTProxy backend installer.'
+for file in webproxy_install.sh webproxy_backend_install.sh update_check.py component_update.sh; do
+  curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/$file?mtpadmin=$CACHE_BUST" -o "$TMP/$file" || die "Не удалось скачать scripts/$file"
+done
+bash -n "$TMP/webproxy_install.sh" || die 'WEB Proxy installer syntax invalid.'
 bash -n "$TMP/webproxy_backend_install.sh" || die 'WEB backend installer syntax invalid.'
+bash -n "$TMP/component_update.sh" || die 'Component updater syntax invalid.'
+python3 -m py_compile "$TMP/update_check.py" || die 'Update checker syntax invalid.'
+install -d -m 0755 /usr/local/lib/mtpadmin
+install -m 0700 -o root -g root "$TMP/webproxy_install.sh" /usr/local/lib/mtpadmin/webproxy_install.sh
 install -m 0700 -o root -g root "$TMP/webproxy_backend_install.sh" /usr/local/lib/mtpadmin/webproxy_backend_install.sh
+install -m 0700 -o root -g root "$TMP/component_update.sh" /usr/local/lib/mtpadmin/component_update.sh
+install -m 0755 -o root -g root "$TMP/update_check.py" /usr/local/lib/mtpadmin/update_check.py
 
-# Make every future WEB Proxy reinstall/update/hostname change repair the
-# official local MTProxy backend after the relay writes its profile.
-python3 - /usr/local/lib/mtpadmin/component_update.sh <<'PY'
-from pathlib import Path
-import sys
-p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
-if "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" not in s:
-    needle="WEBINSTALL='/usr/local/lib/mtpadmin/webproxy_install.sh'\n"
-    if s.count(needle)!=1: raise SystemExit('component updater WEBINSTALL marker not found')
-    s=s.replace(needle,needle+"WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'\n",1)
-
-old="""  if [[ \"$cur\" == \"$latest\" && -x /usr/local/bin/tproxy-server ]]; then log_status \"$COMPONENT\" success \"WEB Proxy уже актуален: ${cur:0:12}\"; ok 'WEB Proxy уже актуален'; return; fi
-"""
-new="""  if [[ \"$cur\" == \"$latest\" && -x /usr/local/bin/tproxy-server ]]; then
-    [[ -x \"$WEBBACKEND\" ]] || die 'WEB Proxy backend installer не установлен'
-    bash \"$WEBBACKEND\"
-    log_status \"$COMPONENT\" success \"WEB Proxy уже актуален: ${cur:0:12}; official MTProxy backend READY\"; ok 'WEB Proxy уже актуален; backend READY'; return
-  fi
-"""
-if old in s: s=s.replace(old,new,1)
-elif 'official MTProxy backend READY' not in s: raise SystemExit('component updater current-WEB branch marker not found')
-
-old='''  TPROXY_COMMIT_OVERRIDE="$latest" bash "$WEBINSTALL"
-  "$CHECKER" >/dev/null 2>&1 || true; log_status "$COMPONENT" success "WEB Proxy обновлён ${cur:0:12} → ${latest:0:12}"; ok "WEB Proxy обновлён → ${latest:0:12}"
-'''
-new='''  TPROXY_COMMIT_OVERRIDE="$latest" bash "$WEBINSTALL"
-  [[ -x "$WEBBACKEND" ]] || die 'WEB Proxy backend installer не установлен'
-  bash "$WEBBACKEND"
-  "$CHECKER" >/dev/null 2>&1 || true; log_status "$COMPONENT" success "WEB Proxy обновлён ${cur:0:12} → ${latest:0:12}; backend READY"; ok "WEB Proxy обновлён → ${latest:0:12}; backend READY"
-'''
-if old in s: s=s.replace(old,new,1)
-elif 'backend READY"; ok "WEB Proxy обновлён' not in s: raise SystemExit('component updater WEB update marker not found')
-
-old='''  log_status "$COMPONENT" running "Применяю hostname $host"; WEBPROXY_HOST_OVERRIDE="$host" bash "$WEBINSTALL"; "$CHECKER" >/dev/null 2>&1 || true
-'''
-new='''  log_status "$COMPONENT" running "Применяю hostname $host"; WEBPROXY_HOST_OVERRIDE="$host" bash "$WEBINSTALL"; [[ -x "$WEBBACKEND" ]] || die 'WEB Proxy backend installer не установлен'; bash "$WEBBACKEND"; "$CHECKER" >/dev/null 2>&1 || true
-'''
-if old in s: s=s.replace(old,new,1)
-elif "bash \"$WEBBACKEND\"; \"$CHECKER\"" not in s: raise SystemExit('component updater hostname marker not found')
-p.write_text(s,encoding='utf-8')
-PY
-bash -n /usr/local/lib/mtpadmin/component_update.sh || die 'Patched component updater syntax invalid.'
-
-info 'Переключаю Telegram WEB Proxy на официальный локальный MTProxy backend...'
+info 'Проверяю/восстанавливаю Telegram WEB Proxy...'
+bash /usr/local/lib/mtpadmin/webproxy_install.sh
 bash /usr/local/lib/mtpadmin/webproxy_backend_install.sh
 
-# Explicit end-to-end local checks. TeleMT on :8443 remains untouched and serves
-# ordinary MTProxy users; WEB transport now has its own stock backend on :2398.
-systemctl is-active --quiet mtpadmin-webproxy-mtproxy.service || die 'Official WEB MTProxy backend service не активен.'
-ss -H -ltn 'sport = :2398' | grep -q . || die 'Official WEB MTProxy backend не слушает 2398.'
-nft list table inet mtpadmin_webproxy_backend >/dev/null 2>&1 || die 'WEB MTProxy backend firewall отсутствует.'
-curl -fsS --max-time 3 http://127.0.0.1:8081/readyz >/dev/null || die 'WEB relay после backend migration не READY.'
+# If a historical hot reload left config/runtime out of sync, repair once with a
+# full TeleMT restart. Do not rotate or delete any source.
+if ! python3 - <<'PY'
+import json,tomllib,urllib.request
+with open('/etc/mtpadmin/config/config.toml','rb') as f: cfg=set(((tomllib.load(f).get('access') or {}).get('users') or {}))
+with urllib.request.urlopen('http://127.0.0.1:9091/v1/users',timeout=4) as r: run={str(x.get('username')) for x in (json.load(r).get('data') or [])}
+raise SystemExit(0 if cfg==run else 1)
+PY
+then
+  warn 'TeleMT config/runtime sources расходятся; выполняю один repair restart.'
+  systemctl restart mtpadmin-telemt.service
+  ready=0
+  for i in {1..30}; do systemctl is-active --quiet mtpadmin-telemt.service && curl -fsS --max-time 2 http://127.0.0.1:9091/v1/health/ready >/dev/null 2>&1 && { ready=1; break; }; sleep 1; done
+  (( ready == 1 )) || die 'TeleMT не вышел в READY после source repair restart.'
+  python3 - <<'PY' || die 'После restart config/runtime sources всё ещё расходятся.'
+import json,tomllib,urllib.request
+with open('/etc/mtpadmin/config/config.toml','rb') as f: cfg=set(((tomllib.load(f).get('access') or {}).get('users') or {}))
+with urllib.request.urlopen('http://127.0.0.1:9091/v1/users',timeout=4) as r: run={str(x.get('username')) for x in (json.load(r).get('data') or [])}
+assert cfg==run,(sorted(cfg),sorted(run))
+PY
+  systemctl restart mtpadmin-scanner.service >/dev/null 2>&1 || true
+fi
+
+info 'Проверяю базу статистики...'
+[[ "$(sqlite3 /var/lib/mtpadmin/stats.db 'PRAGMA quick_check;' 2>/dev/null | head -1)" == ok ]] || die 'SQLite stats.db quick_check failed.'
+
+info 'Проверяю WEB relay data-path contract...'
+python3 - <<'PY' || exit 1
+import json
+with open('/etc/tproxy-server/config.json',encoding='utf-8') as f:d=json.load(f)
+v=int((d.get('limits') or {}).get('max_pending_items_per_session') or 0)
+assert v>=16384,v
+PY
+systemctl is-active --quiet tproxy-server.service || die 'tproxy-server не active.'
+systemctl is-active --quiet mtpadmin-webproxy-mtproxy.service || die 'official MTProxy backend не active.'
+ss -H -ltn 'sport = :2398' | grep -q . || die 'official MTProxy backend не слушает 2398.'
+curl -fsS --max-time 3 http://127.0.0.1:8081/readyz >/dev/null || die 'WEB relay не READY.'
+
+info 'FD regression активного blue/green web...'
+if [[ -f /etc/mtpadmin/web-runtime.env ]]; then
+  # shellcheck disable=SC1091
+  source /etc/mtpadmin/web-runtime.env
+  svc=${WEB_ACTIVE_SERVICE:-}; port=${WEB_ACTIVE_PORT:-}
+  if [[ -n "$svc" && -n "$port" ]]; then
+    pid=$(systemctl show -p MainPID --value "$svc" 2>/dev/null || true)
+    if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 && -d "/proc/$pid/fd" ]]; then
+      before=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 | wc -l)
+      for i in {1..30}; do curl -fsS -H 'X-MTPADMIN-User: release-fd-test' --max-time 5 "http://127.0.0.1:$port/" >/dev/null; done
+      sleep 1; after=$(find "/proc/$pid/fd" -mindepth 1 -maxdepth 1 | wc -l); delta=$((after-before))
+      (( delta <= 5 )) || die "Web FD regression: before=$before after=$after delta=$delta"
+      ok "Web FD stable: before=$before after=$after delta=$delta"
+    fi
+  fi
+fi
 
 /usr/local/lib/mtpadmin/update_check.py >/dev/null 2>&1 || true
+systemctl restart mtpadmin-scanner.service >/dev/null 2>&1 || true
+sleep 2
 
 echo
-info 'Финальная проверка MTPADMIN + WEB Proxy...'
+info 'Финальная проверка MTPADMIN 0.11.8...'
 /usr/local/bin/mtpadmin doctor
-ok 'MTPADMIN 0.11.7 установлен: Telegram WEB Proxy использует official MTProxy localhost:2398; TeleMT остаётся на 8443.'
+ok 'MTPADMIN 0.11.8 установлен: source lifecycle, persistent stats, WEB Proxy repair, FD regression и VPN BOSS integration.'
