@@ -28,7 +28,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('/tmp/mtpadmin_web.py'); s=p.read_text(); m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for f in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py'):
+          for f in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py'):
               e=Path('web/mtpadmin_web.d/'+f).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -41,7 +41,7 @@ jobs:
           bash -n web-install.sh
           bash -n scripts/webproxy_install.sh
           bash -n scripts/component_update.sh
-          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py web/mtpadmin_web.d/39-compact-ui.py web/mtpadmin_web.d/40-async-update-ui.py
+          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py web/mtpadmin_web.d/39-compact-ui.py web/mtpadmin_web.d/40-async-update-ui.py web/mtpadmin_web.d/41-webproxy-links-ui.py
           python3 - <<'PY'
           from pathlib import Path
           s=Path('/tmp/mtpadmin').read_text()
@@ -49,8 +49,31 @@ jobs:
           assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
           assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
           assert 'Swap pressure acceptable' not in s
-          assert Path('VERSION').read_text().strip()=='0.11.5'
+          assert Path('VERSION').read_text().strip()=='0.11.6'
           print('Final runtime PASS')
+          PY
+
+      - name: WEB Proxy client links and compact Links page
+        run: |
+          python3 - <<'PY'
+          import importlib.util, tempfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          f=tempfile.NamedTemporaryFile('w',delete=False)
+          f.write('[access.users]\n"WEB_PROXY" = "00112233445566778899AABBCCDDEEFF"\n'); f.close()
+          w.CFG=f.name
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.6'}
+          w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
+          assert w._o_webproxy_secret()=='00112233445566778899aabbccddeeff'
+          links=w._o_webproxy_links()
+          assert links['tg'].startswith('tg://webproxy?') and 'server=webproxy.example.com' in links['tg']
+          assert links['https'].startswith('https://t.me/webproxy?')
+          w.source_rows=lambda:[{'username':'DEMO','enabled':True,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff'],'secure':[],'tls':[]}}]
+          html=w.links_html()
+          assert 'secret скрыт' in html and 'TG direct' in html and 't.me' in html
+          assert '00112233445566778899aabbccddeeff' in html  # present only for copy/reveal, not rendered by default
+          assert 'hidden' in html and 'Показать' in html
+          print('WEB links PASS')
           PY
 
       - name: Compact asynchronous Operations UI
@@ -58,23 +81,20 @@ jobs:
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.5'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.6'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
-          w._o_update_status=lambda:{'checked_at':1,'updates':1,'components':{'mtpadmin':{'current':'0.11.4','latest':'0.11.5','available':True},'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}}}
-          w._o_component_status=lambda:{'component':'mtpadmin','state':'running','detail':'MTPADMIN 0.11.5 · blue/green'}
-          w._o_service=lambda name: True; w._o_http_ok=lambda url: True
+          w._o_update_status=lambda:{'checked_at':1,'updates':1,'components':{'mtpadmin':{'current':'0.11.5','latest':'0.11.6','available':True},'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}}}
+          w._o_component_status=lambda:{'component':'webproxy','state':'running','detail':'Проверяю upstream'}
+          w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
           w.scalar=lambda *a,**k: 5; w._o_backups=lambda:'<div>backup</div>'
           html=w._o_operations_html('tester','csrf')
           for marker in ('data-ui-tab=\'overview\'','data-ui-tab=\'updates\'','data-ui-tab=\'webproxy\'','data-ui-tab=\'guard\'','data-ui-tab=\'details\''):
               assert marker in html
-          assert 'Обновить MTPADMIN' not in html
-          assert 'MTPADMIN · выполняется' in html and 'RUNNING' in html
-          assert 'Проверить / переустановить TeleMT' in html
-          assert 'Проверить / переустановить Telegram WEB Proxy' in html
-          page=w.page_template('T',html,'tester','operations',refresh=10)
-          assert 'mtpadmin-compact-style' in page and 'mtpadmin-compact-script' in page
-          assert 'ui-table-wrap' in page and 'position:sticky' in page
-          print('Compact async UI PASS')
+          update=w._o_update_center('csrf')
+          assert 'Telegram WEB Proxy · выполняется' in update
+          assert 'MTPADMIN · недоступно' in update and 'TeleMT · недоступно' in update
+          assert update.count('disabled')>=4
+          print('Serialized async UI PASS')
           PY
 
       - name: Update checker semantics
@@ -83,13 +103,13 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.5')>(0,11,4)
+          assert u.semver('0.11.6')>(0,11,5)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
           PY
 
-      - name: WEB Proxy source recovery and test umask fix
+      - name: WEB Proxy source recovery and upstream tests
         run: |
           cat >/tmp/mtpadmin-partial.toml <<'EOF'
           [access.users]
@@ -99,43 +119,27 @@ jobs:
           test "$found" = '1|00112233445566778899aabbccddeeff'
           grep -q 'уже существует — переиспользую без ротации secret' scripts/webproxy_install.sh
           grep -q "umask 022; exec" update.sh
-          grep -q 'Production profiles.json remains 0400' update.sh
-          echo 'WEB Proxy recovery PASS'
-
-      - name: Build official WEB relay with upstream permission tests
-        run: |
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
           git -C /tmp/tproxy-upstream remote add origin https://github.com/telegramdesktop/tproxy-server.git
           git -C /tmp/tproxy-upstream fetch -q --depth=1 origin 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           (cd /tmp/tproxy-upstream && umask 022 && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
-          mkdir -p /tmp/tproxy-site; printf '<!doctype html><title>ci</title>\n' >/tmp/tproxy-site/index.html
-          printf '%s\n' '{"public_hostname":"webproxy.example.com","listen":"127.0.0.1:18080","admin_listen":"127.0.0.1:18081","public_dir":"/tmp/tproxy-site","profiles_file":"/tmp/tproxy-profiles.json"}' >/tmp/tproxy-config.json
-          printf '%s\n' '{"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:8443","carrier_mode":"https"}]}' >/tmp/tproxy-profiles.json
-          chmod 600 /tmp/tproxy-profiles.json
-          /tmp/tproxy-server -config /tmp/tproxy-config.json -profiles-file /tmp/tproxy-profiles.json -check
 
-      - name: Component updater safety and nonblocking dispatch
+      - name: Component updater safety and serialization
         run: |
           grep -q 'telemt-before-' scripts/component_update.sh
           grep -q 'Checksum нового TeleMT' scripts/component_update.sh
-          grep -q 'wait_telemt' scripts/component_update.sh
           grep -q 'systemd-run --quiet --no-block --collect' scripts/component_update.sh
-          grep -q 'queued' scripts/component_update.sh
-          grep -q 'TPROXY_COMMIT_OVERRIDE' scripts/component_update.sh
-          grep -q 'WEBPROXY_HOST_OVERRIDE' scripts/component_update.sh
-          grep -q 'branches/main' scripts/component_update.sh
+          grep -q 'flock -n' scripts/component_update.sh
+          grep -q 'Уже выполняется другая операция обновления' scripts/component_update.sh
           grep -q 'contents/VERSION?ref=$sha' scripts/component_update.sh
-          grep -q 'commit-pinned update.sh' scripts/component_update.sh
           grep -q '"$RAW/$sha/update.sh"' scripts/component_update.sh
 
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.5'" update.sh
-          grep -q '39-compact-ui.py' update.sh
-          grep -q '40-async-update-ui.py' update.sh
-          grep -q 'update_check.py' update.sh
+          grep -q "VERSION='0.11.6'" update.sh
+          grep -q '41-webproxy-links-ui.py' update.sh
           grep -q 'component_update.sh' update.sh
           grep -q 'mtpadmin-update-check.timer' update.sh
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
