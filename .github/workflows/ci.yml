@@ -40,6 +40,7 @@ jobs:
           bash -n update.sh
           bash -n web-install.sh
           bash -n scripts/webproxy_install.sh
+          bash -n scripts/webproxy_backend_install.sh
           bash -n scripts/component_update.sh
           python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py web/mtpadmin_web.d/39-compact-ui.py web/mtpadmin_web.d/40-async-update-ui.py web/mtpadmin_web.d/41-webproxy-links-ui.py
           python3 - <<'PY'
@@ -49,7 +50,7 @@ jobs:
           assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
           assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
           assert 'Swap pressure acceptable' not in s
-          assert Path('VERSION').read_text().strip()=='0.11.6'
+          assert Path('VERSION').read_text().strip()=='0.11.7'
           print('Final runtime PASS')
           PY
 
@@ -57,12 +58,11 @@ jobs:
         run: |
           python3 - <<'PY'
           import importlib.util, tempfile
-          from pathlib import Path
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           f=tempfile.NamedTemporaryFile('w',delete=False)
           f.write('[access.users]\n"WEB_PROXY" = "00112233445566778899AABBCCDDEEFF"\n'); f.close()
           w.CFG=f.name
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.6'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.7'}
           w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
           assert w._o_webproxy_secret()=='00112233445566778899aabbccddeeff'
           links=w._o_webproxy_links()
@@ -71,7 +71,7 @@ jobs:
           w.source_rows=lambda:[{'username':'DEMO','enabled':True,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff'],'secure':[],'tls':[]}}]
           html=w.links_html()
           assert 'secret скрыт' in html and 'TG direct' in html and 't.me' in html
-          assert '00112233445566778899aabbccddeeff' in html  # present only for copy/reveal, not rendered by default
+          assert '00112233445566778899aabbccddeeff' in html
           assert 'hidden' in html and 'Показать' in html
           print('WEB links PASS')
           PY
@@ -81,9 +81,9 @@ jobs:
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.6'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.7'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
-          w._o_update_status=lambda:{'checked_at':1,'updates':1,'components':{'mtpadmin':{'current':'0.11.5','latest':'0.11.6','available':True},'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}}}
+          w._o_update_status=lambda:{'checked_at':1,'updates':1,'components':{'mtpadmin':{'current':'0.11.6','latest':'0.11.7','available':True},'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}}}
           w._o_component_status=lambda:{'component':'webproxy','state':'running','detail':'Проверяю upstream'}
           w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
           w.scalar=lambda *a,**k: 5; w._o_backups=lambda:'<div>backup</div>'
@@ -103,7 +103,7 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.6')>(0,11,5)
+          assert u.semver('0.11.7')>(0,11,6)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
@@ -118,13 +118,23 @@ jobs:
           found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
           test "$found" = '1|00112233445566778899aabbccddeeff'
           grep -q 'уже существует — переиспользую без ротации secret' scripts/webproxy_install.sh
-          grep -q "umask 022; exec" update.sh
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
           git -C /tmp/tproxy-upstream remote add origin https://github.com/telegramdesktop/tproxy-server.git
           git -C /tmp/tproxy-upstream fetch -q --depth=1 origin 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           (cd /tmp/tproxy-upstream && umask 022 && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
+
+      - name: Official WEB MTProxy backend contract
+        run: |
+          grep -q "MTPROXY_COMMIT='f36d8af769ffaeac36978d38c2c0f6d1104c2137'" scripts/webproxy_backend_install.sh
+          grep -q "MTPROXY_CHECKSUM='919795c416b870670841a21d1930ad97a24c7b84b9eb8c6f9e3de32f2fdf4655'" scripts/webproxy_backend_install.sh
+          grep -q "backend':'127.0.0.1:2398'" scripts/webproxy_backend_install.sh
+          grep -q 'tcp dport { 2398, 8888 } drop' scripts/webproxy_backend_install.sh
+          grep -q 'mtpadmin-webproxy-mtproxy.service' scripts/webproxy_backend_install.sh
+          grep -q 'TelegramMessenger/MTProxy' scripts/webproxy_backend_install.sh
+          grep -q 'webproxy_backend_install.sh' update.sh
+          grep -q 'official MTProxy localhost:2398' update.sh
 
       - name: Component updater safety and serialization
         run: |
@@ -135,13 +145,14 @@ jobs:
           grep -q 'Уже выполняется другая операция обновления' scripts/component_update.sh
           grep -q 'contents/VERSION?ref=$sha' scripts/component_update.sh
           grep -q '"$RAW/$sha/update.sh"' scripts/component_update.sh
+          grep -q 'WEBBACKEND=' update.sh
+          grep -q 'bash \"$WEBBACKEND\"' update.sh
 
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.6'" update.sh
-          grep -q '41-webproxy-links-ui.py' update.sh
-          grep -q 'component_update.sh' update.sh
-          grep -q 'mtpadmin-update-check.timer' update.sh
+          grep -q "VERSION='0.11.7'" update.sh
+          grep -q "BASE_0116_COMMIT='36c0a0e1ad6d21404922c15842fc357b339e6f7f'" update.sh
+          grep -q 'webproxy_backend_install.sh' update.sh
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
 
       - name: README product page
