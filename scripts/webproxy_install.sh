@@ -3,8 +3,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.0'
-TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'
+VERSION='0.11.1'
+PINNED_TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 STATE='/etc/mtpadmin/state.env'
 CFG='/etc/mtpadmin/config/config.toml'
@@ -20,6 +20,10 @@ TPROXY_MARKER='/usr/local/lib/mtpadmin/tproxy-server.commit'
 SITE='/srv/tproxy-site'
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+chmod 0755 "$TMP"
+
+REQUESTED_HOST=${WEBPROXY_HOST_OVERRIDE:-}
+REQUESTED_COMMIT=${TPROXY_COMMIT_OVERRIDE:-}
 
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
@@ -35,16 +39,16 @@ PUBLIC_IP=${PUBLIC_IP:-}
 PORT=${PORT:-8443}
 [[ -n "$PUBLIC_HOST" && -n "$PUBLIC_IP" ]] || die 'В state.env нет PUBLIC_HOST/PUBLIC_IP.'
 
-if [[ -z "${WEBPROXY_HOST:-}" ]]; then
-  if [[ "$PUBLIC_HOST" == *.*.* ]]; then
-    WEBPROXY_HOST="webproxy.${PUBLIC_HOST#*.}"
-  else
-    WEBPROXY_HOST="webproxy.$PUBLIC_HOST"
-  fi
+if [[ -n "$REQUESTED_HOST" ]]; then
+  WEBPROXY_HOST="$REQUESTED_HOST"
+elif [[ -z "${WEBPROXY_HOST:-}" ]]; then
+  if [[ "$PUBLIC_HOST" == *.*.* ]]; then WEBPROXY_HOST="webproxy.${PUBLIC_HOST#*.}"; else WEBPROXY_HOST="webproxy.$PUBLIC_HOST"; fi
 fi
 WEBPROXY_SOURCE=${WEBPROXY_SOURCE:-WEB_PROXY}
+TPROXY_COMMIT=${REQUESTED_COMMIT:-${WEBPROXY_TPROXY_COMMIT:-$PINNED_TPROXY_COMMIT}}
 [[ "$WEBPROXY_HOST" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$WEBPROXY_HOST" == *.* ]] || die 'Некорректный WEBPROXY_HOST.'
 [[ "$WEBPROXY_SOURCE" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die 'Некорректный WEBPROXY_SOURCE.'
+[[ "$TPROXY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 'Некорректный tproxy-server commit.'
 
 state_set(){
   python3 - "$STATE" "$1" "$2" <<'PY'
@@ -58,7 +62,8 @@ for line in lines:
     else: out.append(line)
 if not done: out.append(key+"='"+value.replace("'","'\\''")+"'")
 fd,tmp=tempfile.mkstemp(prefix='.state.',dir=str(p.parent),text=True)
-with os.fdopen(fd,'w') as f: f.write('\n'.join(out)+'\n')
+with os.fdopen(fd,'w',encoding='utf-8') as f:
+    f.write('\n'.join(out)+'\n'); f.flush(); os.fsync(f.fileno())
 os.chmod(tmp,0o600); os.replace(tmp,p)
 PY
 }
@@ -85,96 +90,92 @@ reload_telemt(){
   return 1
 }
 
+state_set WEBPROXY_HOST "$WEBPROXY_HOST"
+state_set WEBPROXY_SOURCE "$WEBPROXY_SOURCE"
+state_set WEBPROXY_ENABLED '1'
+state_set WEBPROXY_READY '0'
+
 secret=$(telemt_secret)
 if [[ -z "$secret" ]]; then
   cfg_backup="$TMP/config.toml.before-webproxy"
   cp -a "$CFG" "$cfg_backup"
   secret=$("$USERCFG" add "$WEBPROXY_SOURCE") || { cp -a "$cfg_backup" "$CFG"; die 'Не удалось создать TeleMT source для WEB Proxy.'; }
   if ! reload_telemt; then
-    cp -a "$cfg_backup" "$CFG"
-    reload_telemt >/dev/null 2>&1 || true
+    cp -a "$cfg_backup" "$CFG"; reload_telemt >/dev/null 2>&1 || true
     die 'TeleMT не принял WEB Proxy source; конфиг восстановлен.'
   fi
   ok "TeleMT source $WEBPROXY_SOURCE создан без перезапуска"
 fi
 [[ "$secret" =~ ^[0-9a-f]{32}$ ]] || die 'WEB Proxy source имеет secret неверного формата.'
 
-state_set WEBPROXY_HOST "$WEBPROXY_HOST"
-state_set WEBPROXY_SOURCE "$WEBPROXY_SOURCE"
-state_set WEBPROXY_TPROXY_COMMIT "$TPROXY_COMMIT"
-state_set WEBPROXY_ENABLED '1'
+if ! id tproxy >/dev/null 2>&1; then useradd --system --home /nonexistent --shell /usr/sbin/nologin tproxy; fi
 
-if ! id tproxy >/dev/null 2>&1; then
-  useradd --system --home /nonexistent --shell /usr/sbin/nologin tproxy
+missing=()
+for c in git curl; do command -v "$c" >/dev/null 2>&1 || missing+=("$c"); done
+[[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates)
+if ((${#missing[@]})); then
+  apt-get update -y >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" >/dev/null
 fi
 
+go_binary=''
+if command -v go >/dev/null 2>&1; then
+  minor=$(go env GOVERSION 2>/dev/null | sed -E 's/^go1\.([0-9]+).*/\1/' || true)
+  [[ "$minor" =~ ^[0-9]+$ ]] && (( minor >= 20 )) && go_binary=$(command -v go)
+fi
+if [[ -z "$go_binary" && -x /opt/go1.26.5/bin/go ]]; then go_binary=/opt/go1.26.5/bin/go; fi
+if [[ -z "$go_binary" ]]; then
+  go_version='1.26.5'; go_checksum='5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053'
+  archive="$TMP/go.tgz"
+  info "Устанавливаю Go $go_version для сборки WEB relay..."
+  curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 -o "$archive" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
+  [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$go_checksum" ]] || die 'Checksum Go toolchain не совпал.'
+  rm -rf "/opt/go${go_version}.new"; mkdir -p "/opt/go${go_version}.new"
+  tar -C "/opt/go${go_version}.new" --strip-components=1 -xzf "$archive"
+  rm -rf "/opt/go${go_version}"; mv "/opt/go${go_version}.new" "/opt/go${go_version}"
+  go_binary="/opt/go${go_version}/bin/go"
+fi
+
+current_commit=$(cat "$TPROXY_MARKER" 2>/dev/null || true)
 need_build=1
-if [[ -x /usr/local/bin/tproxy-server && -f "$TPROXY_MARKER" ]] && grep -Fxq "$TPROXY_COMMIT" "$TPROXY_MARKER"; then
-  need_build=0
-fi
+[[ -x /usr/local/bin/tproxy-server && "$current_commit" == "$TPROXY_COMMIT" ]] && need_build=0
+candidate_bin='/usr/local/bin/tproxy-server'
 
 if (( need_build == 1 )); then
-  info 'Собираю официальный telegramdesktop/tproxy-server (первый запуск может занять несколько минут)...'
-  missing=()
-  command -v git >/dev/null 2>&1 || missing+=(git)
-  command -v curl >/dev/null 2>&1 || missing+=(curl)
-  [[ -f /etc/ssl/certs/ca-certificates.crt ]] || missing+=(ca-certificates)
-  if ((${#missing[@]})); then
-    apt-get update -y >/dev/null
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" >/dev/null
-  fi
-
-  go_binary=''
-  if command -v go >/dev/null 2>&1; then
-    minor=$(go env GOVERSION 2>/dev/null | sed -E 's/^go1\.([0-9]+).*/\1/' || true)
-    [[ "$minor" =~ ^[0-9]+$ ]] && (( minor >= 20 )) && go_binary=$(command -v go)
-  fi
-  if [[ -z "$go_binary" ]]; then
-    go_version='1.26.5'
-    go_checksum='5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053'
-    archive="$TMP/go.tgz"
-    curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-      -o "$archive" "https://go.dev/dl/go${go_version}.linux-amd64.tar.gz"
-    [[ "$(sha256sum "$archive" | awk '{print $1}')" == "$go_checksum" ]] || die 'Checksum Go toolchain не совпал.'
-    rm -rf "/opt/go${go_version}.new"
-    mkdir -p "/opt/go${go_version}.new"
-    tar -C "/opt/go${go_version}.new" --strip-components=1 -xzf "$archive"
-    rm -rf "/opt/go${go_version}"
-    mv "/opt/go${go_version}.new" "/opt/go${go_version}"
-    go_binary="/opt/go${go_version}/bin/go"
-  fi
-
-  src="$TMP/tproxy-server"
-  git init -q "$src"
-  git -C "$src" remote add origin "$TPROXY_REPO"
+  info "Собираю официальный telegramdesktop/tproxy-server ${TPROXY_COMMIT:0:12}..."
+  src="$TMP/tproxy-server"; buildhome="$TMP/buildhome"
+  git init -q "$src"; git -C "$src" remote add origin "$TPROXY_REPO"
   git -C "$src" fetch -q --depth=1 origin "$TPROXY_COMMIT"
   git -C "$src" checkout -q --detach FETCH_HEAD
-  [[ "$(git -C "$src" rev-parse HEAD)" == "$TPROXY_COMMIT" ]] || die 'Не удалось зафиксировать официальный tproxy-server commit.'
-  (cd "$src" && GOMAXPROCS=1 "$go_binary" test -p=1 ./...)
-  (cd "$src" && GOMAXPROCS=1 "$go_binary" build -p=1 -trimpath -ldflags='-s -w' -o "$TMP/tproxy-server.bin" ./cmd/tproxy-server)
-  install -m 0755 -o root -g root "$TMP/tproxy-server.bin" /usr/local/bin/tproxy-server
-  install -d -m 0755 /usr/local/lib/mtpadmin
-  printf '%s\n' "$TPROXY_COMMIT" > "$TPROXY_MARKER"
-  chmod 0644 "$TPROXY_MARKER"
-  ok 'Официальный WEB relay собран и установлен'
+  [[ "$(git -C "$src" rev-parse HEAD)" == "$TPROXY_COMMIT" ]] || die 'Не удалось зафиксировать tproxy-server commit.'
+  install -d -o tproxy -g tproxy -m 0700 "$buildhome"
+  chown -R tproxy:tproxy "$src"
+  # Upstream permission tests intentionally must not run as root: root can bypass
+  # the mode checks they verify and produces a false failure.
+  (cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 "$go_binary" test -p=1 ./...)
+  (cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 "$go_binary" build -p=1 -trimpath -ldflags='-s -w' -o "$buildhome/tproxy-server.bin" ./cmd/tproxy-server)
+  chmod 0755 "$buildhome/tproxy-server.bin"
+  candidate_bin="$buildhome/tproxy-server.bin"
+  ok 'Официальный WEB relay собран и upstream tests PASS'
 fi
 
 install -d -o root -g tproxy -m 0750 /etc/tproxy-server
 install -d -o root -g root -m 0755 "$SITE"
+install -d -m 0700 /var/backups/mtpadmin
 
-public_json=''
+cfg_backup=''; profiles_backup=''; binary_backup=''
+if [[ -f "$TPROXY_CFG" ]]; then cfg_backup="$TMP/config.json.old"; cp -a "$TPROXY_CFG" "$cfg_backup"; fi
+if [[ -f "$TPROXY_PROFILES" ]]; then profiles_backup="$TMP/profiles.json.old"; cp -a "$TPROXY_PROFILES" "$profiles_backup"; fi
+if [[ -x /usr/local/bin/tproxy-server ]]; then binary_backup="/var/backups/mtpadmin/tproxy-server-before-${TPROXY_COMMIT:0:12}-$(date +%Y%m%d-%H%M%S)"; cp -a /usr/local/bin/tproxy-server "$binary_backup"; fi
+
 if ss -H -ltn 'sport = :3000' 2>/dev/null | grep -q '127.0.0.1:3000'; then
-  public_json='  "public_upstream": "http://127.0.0.1:3000",'
-  site_mode='upstream 127.0.0.1:3000'
+  public_line='  "public_upstream": "http://127.0.0.1:3000",'; site_mode='upstream 127.0.0.1:3000'
 else
-  if [[ ! -f "$SITE/index.html" ]]; then
-    cat > "$SITE/index.html" <<EOF
+  cat > "$SITE/index.html" <<EOF
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${WEBPROXY_HOST}</title><style>body{font-family:system-ui,sans-serif;background:#0b1220;color:#dbe7ff;max-width:760px;margin:12vh auto;padding:28px}h1{font-size:28px}p{color:#9fb0ca;line-height:1.6}.box{border:1px solid #24344e;border-radius:16px;padding:24px;background:#111c30}</style></head><body><div class="box"><h1>${WEBPROXY_HOST}</h1><p>Network service endpoint.</p><p>Status: online.</p></div></body></html>
 EOF
-    chmod 0644 "$SITE/index.html"
-  fi
-  public_json='  "public_dir": "/srv/tproxy-site",'
-  site_mode='static site'
+  chmod 0644 "$SITE/index.html"
+  public_line='  "public_dir": "/srv/tproxy-site",'; site_mode='static site'
 fi
 
 cat > "$TPROXY_CFG" <<EOF
@@ -182,7 +183,7 @@ cat > "$TPROXY_CFG" <<EOF
   "public_hostname": "$WEBPROXY_HOST",
   "listen": "127.0.0.1:8080",
   "admin_listen": "127.0.0.1:8081",
-$public_json
+$public_line
   "profiles_file": "/run/credentials/tproxy-server.service/profiles.json",
   "enable_pprof": false,
   "limits": {
@@ -222,11 +223,15 @@ EOF
 cat > "$TPROXY_PROFILES" <<EOF
 {"profiles":[{"name":"$WEBPROXY_SOURCE","secret":"$secret","backend":"127.0.0.1:$PORT","carrier_mode":"https"}]}
 EOF
-chown root:tproxy "$TPROXY_CFG" "$TPROXY_PROFILES"
-chmod 0640 "$TPROXY_CFG"
-chmod 0400 "$TPROXY_PROFILES"
+chown root:tproxy "$TPROXY_CFG" "$TPROXY_PROFILES"; chmod 0640 "$TPROXY_CFG"; chmod 0400 "$TPROXY_PROFILES"
 
-/usr/local/bin/tproxy-server -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null || die 'tproxy-server config check failed.'
+"$candidate_bin" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null || {
+  [[ -n "$cfg_backup" ]] && cp -a "$cfg_backup" "$TPROXY_CFG" || true
+  [[ -n "$profiles_backup" ]] && cp -a "$profiles_backup" "$TPROXY_PROFILES" || true
+  die 'Новый tproxy-server не принял production config/profile.'
+}
+
+if (( need_build == 1 )); then install -m 0755 -o root -g root "$candidate_bin" /usr/local/bin/tproxy-server; fi
 
 cat > "$TPROXY_SERVICE" <<'EOF'
 [Unit]
@@ -276,9 +281,7 @@ TasksMax=128
 [Install]
 WantedBy=multi-user.target
 EOF
-chmod 0644 "$TPROXY_SERVICE"
-systemctl daemon-reload
-systemctl enable --now tproxy-server.service >/dev/null
+chmod 0644 "$TPROXY_SERVICE"; systemctl daemon-reload; systemctl enable tproxy-server.service >/dev/null
 systemctl restart tproxy-server.service
 
 ready=0
@@ -288,11 +291,18 @@ for i in {1..20}; do
   sleep 1
 done
 if (( ready == 0 )); then
-  systemctl status tproxy-server.service --no-pager -l >&2 || true
-  journalctl -u tproxy-server.service -n 100 --no-pager >&2 || true
-  die 'WEB relay не вышел в READY.'
+  warn 'Новый WEB relay не вышел в READY; выполняю rollback.'
+  if [[ -n "$binary_backup" && -f "$binary_backup" ]]; then cp -a "$binary_backup" /usr/local/bin/tproxy-server; fi
+  [[ -n "$cfg_backup" ]] && cp -a "$cfg_backup" "$TPROXY_CFG" || true
+  [[ -n "$profiles_backup" ]] && cp -a "$profiles_backup" "$TPROXY_PROFILES" || true
+  systemctl restart tproxy-server.service >/dev/null 2>&1 || true
+  journalctl -u tproxy-server.service -n 80 --no-pager >&2 || true
+  die 'WEB relay update/install failed; предыдущая версия восстановлена, если существовала.'
 fi
 ok 'WEB relay READY на 127.0.0.1:8080; admin 127.0.0.1:8081'
+
+printf '%s\n' "$TPROXY_COMMIT" > "$TPROXY_MARKER"; chmod 0644 "$TPROXY_MARKER"
+state_set WEBPROXY_TPROXY_COMMIT "$TPROXY_COMMIT"
 
 [[ -f "$CADDYFILE" ]] || die 'Caddyfile не найден.'
 cp -a "$CADDYFILE" "$TMP/Caddyfile.before-webproxy"
@@ -300,8 +310,7 @@ python3 - "$CADDYFILE" "$TMP/Caddyfile.candidate" "$BEGIN" "$END" "$WEBPROXY_HOS
 from pathlib import Path
 import sys
 src,dst,begin,end,host=sys.argv[1:]
-lines=Path(src).read_text(encoding='utf-8').splitlines(True)
-out=[]; inside=False
+lines=Path(src).read_text(encoding='utf-8').splitlines(True); out=[]; inside=False
 for line in lines:
     s=line.strip()
     if s==begin: inside=True; continue
@@ -313,34 +322,23 @@ out.extend((begin+'\n',f'{host} {{\n','\tencode zstd gzip\n','\theader Strict-Tr
 Path(dst).write_text(''.join(out),encoding='utf-8')
 PY
 caddy fmt --overwrite "$TMP/Caddyfile.candidate" >/dev/null 2>&1 || die 'Не удалось отформатировать Caddy candidate.'
-if ! caddy validate --config "$TMP/Caddyfile.candidate" --adapter caddyfile >/dev/null 2>&1; then
-  caddy validate --config "$TMP/Caddyfile.candidate" --adapter caddyfile || true
-  die 'WEB Proxy Caddy candidate не прошёл validate.'
-fi
+if ! caddy validate --config "$TMP/Caddyfile.candidate" --adapter caddyfile >/dev/null 2>&1; then caddy validate --config "$TMP/Caddyfile.candidate" --adapter caddyfile || true; die 'WEB Proxy Caddy candidate не прошёл validate.'; fi
 install -m 0644 "$TMP/Caddyfile.candidate" "$CADDYFILE"
-if ! systemctl reload caddy; then
-  install -m 0644 "$TMP/Caddyfile.before-webproxy" "$CADDYFILE"
-  systemctl reload caddy || true
-  die 'Caddy reload не прошёл; старый Caddyfile восстановлен.'
-fi
+if ! systemctl reload caddy; then install -m 0644 "$TMP/Caddyfile.before-webproxy" "$CADDYFILE"; systemctl reload caddy || true; die 'Caddy reload не прошёл; старый Caddyfile восстановлен.'; fi
 ok "Caddy подключил WEB Proxy hostname $WEBPROXY_HOST"
 
 resolved=$(getent ahostsv4 "$WEBPROXY_HOST" 2>/dev/null | awk '{print $1}' | sort -u | paste -sd, - || true)
 if printf ',%s,' "$resolved" | grep -q ",$PUBLIC_IP,"; then
   ok "DNS A $WEBPROXY_HOST -> $PUBLIC_IP"
-  for i in {1..20}; do
-    if curl -fsS --max-time 5 "https://$WEBPROXY_HOST/" >/dev/null 2>&1; then
-      ok 'WEB Proxy HTTPS доступен с валидным TLS'
-      break
-    fi
-    sleep 2
-  done
+  tls_ok=0
+  for i in {1..20}; do if curl -fsS --max-time 5 "https://$WEBPROXY_HOST/" >/dev/null 2>&1; then tls_ok=1; break; fi; sleep 2; done
+  (( tls_ok == 1 )) && ok 'WEB Proxy HTTPS доступен с валидным TLS' || warn 'DNS верный, но HTTPS ещё не готов; Caddy продолжит получать сертификат.'
 else
-  warn "DNS $WEBPROXY_HOST пока не указывает на $PUBLIC_IP (сейчас: ${resolved:-не разрешается}). Relay установлен; после создания A-записи Caddy получит сертификат автоматически."
+  warn "DNS $WEBPROXY_HOST пока не указывает на $PUBLIC_IP (сейчас: ${resolved:-не разрешается}). Создайте/измените A-запись; Caddy получит сертификат автоматически."
 fi
 
 state_set WEBPROXY_SITE_MODE "$site_mode"
 state_set WEBPROXY_LAST_INSTALL "$(date +%s)"
-
-ok "Telegram WEB Proxy готов: host=$WEBPROXY_HOST source=$WEBPROXY_SOURCE backend=127.0.0.1:$PORT"
-echo "[INFO] Клиентская ссылка доступна в MTPADMIN → Ссылки; raw secret в лог не выводится."
+state_set WEBPROXY_READY '1'
+ok "Telegram WEB Proxy готов: host=$WEBPROXY_HOST source=$WEBPROXY_SOURCE backend=127.0.0.1:$PORT commit=${TPROXY_COMMIT:0:12}"
+echo '[INFO] Клиентская ссылка доступна в MTPADMIN → Ссылки; raw secret в лог не выводится.'
