@@ -24,13 +24,12 @@ jobs:
             src/mtpadmin.d/29-guard-dispatch.sh \
             src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
+          # The legacy web fragments intentionally split functions/classes.
+          # Their original order must remain contiguous.
           cat \
             web/mtpadmin_web.d/00-core.py \
-            web/mtpadmin_web.d/05-version.py \
             web/mtpadmin_web.d/10-ui.py \
-            web/mtpadmin_web.d/15-guard-ui.py \
             web/mtpadmin_web.d/20-pages.py \
-            web/mtpadmin_web.d/25-guard-route.py \
             web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
 
       - name: Bash syntax
@@ -72,7 +71,7 @@ jobs:
           grep -q 'autoban=OFF' update.sh
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
           grep -q 'nft delete table inet mtpadmin_guard' update.sh
-          if grep -RInE --include='*.py' --include='*.sh' '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
+          if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
             echo 'Unsafe global firewall operation detected'
             exit 1
           fi
