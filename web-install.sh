@@ -1,59 +1,83 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+IFS=$'\n\t'
 
-# Safe launcher for MTPADMIN Web 0.5.1.
-# It reuses the immutable CI-tested 0.5.0 installer and applies the small
-# compatibility fixes before execution: a dedicated WEB_PORT and AF_NETLINK
-# for read-only socket diagnostics from the hardened web service.
-
-VERSION='0.5.1'
+VERSION='0.6.0'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
-URL="https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/${BASE_COMMIT}/web-install.sh"
+ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
-TMP=$(mktemp /tmp/mtpadmin-web-core.XXXXXX.sh)
-cleanup(){ rm -f "$TMP"; }
-trap cleanup EXIT
+WEBSVC='/etc/systemd/system/mtpadmin-web.service'
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL --retry 3 "$URL" -o "$TMP"
+die(){ echo "[FAIL] $*" >&2; exit 1; }
+ok(){ echo "[PASS] $*"; }
+info(){ echo "[INFO] $*"; }
 
-python3 - "$TMP" <<'PY'
+[[ ${EUID:-$(id -u)} -eq 0 ]] || die 'Запустите через sudo/root.'
+[[ -f "$STATE" ]] || die 'Сначала установите MTPADMIN.'
+
+# Scanner Guard is part of the 0.6 product. Bring the core to current main
+# before installing/updating the web UI, without restarting TeleMT.
+if [[ ! -x /usr/local/lib/mtpadmin/scanner_guard.py ]]; then
+  info 'Сначала обновляю ядро MTPADMIN до версии со Scanner Guard...'
+  curl -fsSL --retry 3 "$ROOT/main/update.sh" -o "$TMP/update.sh" || die 'Не удалось скачать update.sh.'
+  chmod 0700 "$TMP/update.sh"
+  bash -n "$TMP/update.sh"
+  bash "$TMP/update.sh"
+fi
+
+curl -fsSL --retry 3 "$ROOT/$BASE_COMMIT/web-install.sh" -o "$TMP/base-web-install.sh" || die 'Не удалось скачать базовый web-installer.'
+
+python3 - "$TMP/base-web-install.sh" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1])
 s=p.read_text(encoding='utf-8')
-if "PORT=9199" not in s:
-    raise SystemExit('unexpected installer source: WEB port marker not found')
-s=s.replace("VERSION='0.5.0'", "VERSION='0.5.1'", 1)
+checks=["VERSION='0.5.0'","PORT=9199","for part in 00-core.py 10-ui.py 20-pages.py 30-actions.py; do","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
+for marker in checks:
+    if marker not in s:
+        raise SystemExit('unexpected immutable web installer: '+marker)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.6.0'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
-old='RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX'
-new='RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK'
-if old not in s:
-    raise SystemExit('unexpected installer source: address-family marker not found')
-s=s.replace(old,new,1)
-p.write_text(s, encoding='utf-8')
+s=s.replace('for part in 00-core.py 10-ui.py 20-pages.py 30-actions.py; do',
+            'for part in 00-core.py 05-version.py 10-ui.py 15-guard-ui.py 20-pages.py 25-guard-route.py 30-actions.py; do',1)
+s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX',
+            'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
+p.write_text(s,encoding='utf-8')
 PY
 
-bash -n "$TMP"
-exec 3>&- 2>/dev/null || true
-bash "$TMP"
+chmod 0700 "$TMP/base-web-install.sh"
+bash -n "$TMP/base-web-install.sh"
 
-# The web installer is also a product-version transition. Keep CLI/web labels
-# consistent even though TeleMT itself is not restarted here.
-if [[ -f "$STATE" ]]; then
-  python3 - "$STATE" <<'PY'
+# Deliberately run the interactive installer as a file, not as a pipe.
+bash "$TMP/base-web-install.sh"
+
+# Keep the product version consistent with the core release.
+python3 - "$STATE" <<'PY'
 from pathlib import Path
 import sys
-p=Path(sys.argv[1])
-lines=[]; done=False
+p=Path(sys.argv[1]); out=[]; done=False
 for line in p.read_text(encoding='utf-8').splitlines():
     if line.startswith('MTPADMIN_VERSION='):
-        lines.append("MTPADMIN_VERSION='0.5.1'"); done=True
-    else:
-        lines.append(line)
-if not done:
-    lines.append("MTPADMIN_VERSION='0.5.1'")
-p.write_text('\n'.join(lines)+'\n',encoding='utf-8')
+        out.append("MTPADMIN_VERSION='0.6.0'"); done=True
+    else: out.append(line)
+if not done: out.append("MTPADMIN_VERSION='0.6.0'")
+p.write_text('\n'.join(out)+'\n',encoding='utf-8')
 PY
-  chmod 0600 "$STATE"
+chmod 0600 "$STATE"
+
+# The immutable installer already writes this setting, but make upgrades from
+# older web units idempotent as well.
+if [[ -f "$WEBSVC" ]]; then
+  if grep -q '^RestrictAddressFamilies=' "$WEBSVC"; then
+    sed -i 's/^RestrictAddressFamilies=.*/RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK/' "$WEBSVC"
+  fi
+  systemctl daemon-reload
+  systemctl restart mtpadmin-web.service
+  sleep 1
+  curl -fsS --max-time 5 -H 'X-MTPADMIN-User: local-health' http://127.0.0.1:9199/healthz >/dev/null || die 'Web healthcheck не прошёл.'
 fi
+
+ok "MTPADMIN Web $VERSION готов. Scanner Guard: autoban=OFF."
