@@ -108,7 +108,11 @@ dispatch(){
   local component="${1:-}"; shift || true
   [[ "$component" =~ ^(mtpadmin|telemt|webproxy|webproxy-host)$ ]] || die 'Unknown component'
   local unit="mtpadmin-component-${component//[^a-zA-Z0-9]/-}-$(date +%s)"
-  systemd-run --quiet --collect --unit="$unit" --property=Type=oneshot --property=TimeoutStartSec=1800 /usr/local/lib/mtpadmin/component_update.sh "$component" "$@"
+  log_status "$component" queued "Задача $unit поставлена в очередь"
+  if ! systemd-run --quiet --no-block --collect --unit="$unit" --property=Type=oneshot --property=TimeoutStartSec=1800 /usr/local/lib/mtpadmin/component_update.sh "$component" "$@"; then
+    log_status "$component" failed "Не удалось запустить systemd job $unit"
+    return 1
+  fi
   echo "$unit"
 }
 
