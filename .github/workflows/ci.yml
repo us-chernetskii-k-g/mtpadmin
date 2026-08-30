@@ -25,7 +25,6 @@ jobs:
             src/mtpadmin.d/29-guard-dispatch.sh \
             src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
-          # Legacy web fragments intentionally split functions/classes and stay contiguous.
           cat \
             web/mtpadmin_web.d/00-core.py \
             web/mtpadmin_web.d/10-ui.py \
@@ -59,16 +58,28 @@ jobs:
 
       - name: Effective CLI runtime checks
         run: |
-          # Regression for 0.8.0: Guard/doctor must be shell code, not swallowed by PYASN heredoc.
-          awk '/^cmd="\$\{1:-menu\}"/{exit}{print}' /tmp/mtpadmin > /tmp/mtpadmin-defs
-          bash -c 'source /tmp/mtpadmin-defs; declare -f doctor_cmd' | grep -q 'Memory PSI healthy'
-          bash -c 'source /tmp/mtpadmin-defs; declare -f doctor_cmd' | grep -q 'Scanner Guard service'
-          bash -c 'source /tmp/mtpadmin-defs; declare -f doctor_cmd' | grep -q 'Web active slot'
-          bash -c 'source /tmp/mtpadmin-defs; declare -f resources_cmd' | grep -q 'Memory pressure PSI'
-          bash -c 'source /tmp/mtpadmin-defs; declare -f security_cmd' | grep -q 'Scanner Guard'
-          grep -n '^PYASN$' /tmp/mtpadmin
-          grep -n '# Scanner Guard / manual firewall controls' /tmp/mtpadmin
-          test "$(grep -n '^PYASN$' /tmp/mtpadmin | head -1 | cut -d: -f1)" -lt "$(grep -n '# Scanner Guard / manual firewall controls' /tmp/mtpadmin | head -1 | cut -d: -f1)"
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('/tmp/mtpadmin').read_text()
+          py=s.index('\nPYASN\n')
+          guard=s.index('# Scanner Guard / manual firewall controls')
+          runtime=s.index('# Runtime-safe doctor helpers')
+          dispatch=s.index('# Early dispatch for Scanner Guard commands')
+          assert py < guard < runtime < dispatch
+          doctors=[i for i in range(len(s)) if s.startswith('doctor_cmd(){',i)]
+          resources=[i for i in range(len(s)) if s.startswith('resources_cmd(){',i)]
+          security=[i for i in range(len(s)) if s.startswith('security_cmd(){',i)]
+          assert len(doctors)>=2 and doctors[-1]>runtime
+          assert len(resources)>=2 and resources[-1]>runtime
+          assert len(security)>=2 and security[-1]>guard
+          tail=s[doctors[-1]:]
+          assert 'Memory PSI healthy' in tail and 'Scanner Guard service' in tail and 'Web active slot' in tail
+          rtail=s[resources[-1]:doctors[-1]]
+          assert 'Memory pressure PSI' in rtail
+          stail=s[security[-1]:runtime]
+          assert 'Scanner Guard' in stail
+          print('Effective CLI runtime ordering PASS')
+          PY
 
       - name: Scanner Guard unit checks
         run: |
