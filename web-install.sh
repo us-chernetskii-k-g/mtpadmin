@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.9.0'
+VERSION='0.10.0'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
@@ -45,7 +45,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.9.0'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.10.0'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
