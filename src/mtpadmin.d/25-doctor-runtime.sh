@@ -1,14 +1,10 @@
-# Runtime-safe doctor helpers for MTPADMIN 0.11.0.
+# Runtime-safe doctor helpers for MTPADMIN 0.11.1.
 # The web panel runs with NoNewPrivileges=true, so sudo cannot be used there
 # merely to drop privileges. runuser works without granting new privileges.
 as_mtpadmin(){
-  if command -v runuser >/dev/null 2>&1; then
-    runuser -u mtpadmin -- "$@"
-  elif command -v sudo >/dev/null 2>&1; then
-    sudo -u mtpadmin "$@"
-  else
-    return 127
-  fi
+  if command -v runuser >/dev/null 2>&1; then runuser -u mtpadmin -- "$@"
+  elif command -v sudo >/dev/null 2>&1; then sudo -u mtpadmin "$@"
+  else return 127; fi
 }
 
 psi_avg10(){
@@ -19,12 +15,8 @@ psi_avg10(){
 
 resources_cmd(){
   header; echo
-  echo 'TeleMT:'
-  ps -o pid,user,%cpu,%mem,rss,vsz,etime,cmd -C telemt
-  if [[ "${WEBPROXY_ENABLED:-0}" == 1 ]]; then
-    echo; echo 'Telegram WEB Proxy:'
-    ps -o pid,user,%cpu,%mem,rss,vsz,etime,cmd -C tproxy-server || true
-  fi
+  echo 'TeleMT:'; ps -o pid,user,%cpu,%mem,rss,vsz,etime,cmd -C telemt
+  if [[ "${WEBPROXY_ENABLED:-0}" == 1 ]]; then echo; echo 'Telegram WEB Proxy:'; ps -o pid,user,%cpu,%mem,rss,vsz,etime,cmd -C tproxy-server || true; fi
   echo; echo 'Память:'; free -h; echo
   if [[ -r /proc/pressure/memory ]]; then echo 'Memory pressure PSI:'; cat /proc/pressure/memory; echo; fi
   echo 'Swap / major faults (накопительные счётчики):'
@@ -55,27 +47,27 @@ doctor_cmd(){
     nft list table inet mtpadmin_guard >/dev/null 2>&1&&ok 'Scanner Guard nftables table'||{ fail 'Scanner Guard nftables table';((f++))||true; }
     ghb=$(dbq "SELECT value FROM scanner_meta WHERE key='heartbeat';"); gage=$((now-${ghb:-0})); ((gage<40))&&ok "Scanner Guard heartbeat ${gage}s"||{ warn "Scanner Guard heartbeat stale: ${gage}s";((w++))||true; }
     [[ "$(dbq "SELECT value FROM scanner_meta WHERE key='autoban';")" != 1 ]]&&ok 'Scanner Guard autoban disabled'||{ warn 'Scanner Guard autoban is enabled';((w++))||true; }
-  else
-    warn 'Scanner Guard not installed'; ((w++))||true
-  fi
+  else warn 'Scanner Guard not installed'; ((w++))||true; fi
   if [[ -f /etc/mtpadmin/web-runtime.env ]]; then
     webp=$(awk -F= '/^WEB_ACTIVE_PORT=/{gsub(/[\x27\x22]/,"",$2);print $2}' /etc/mtpadmin/web-runtime.env | tail -1)
     websvc=$(awk -F= '/^WEB_ACTIVE_SERVICE=/{gsub(/[\x27\x22]/,"",$2);print $2}' /etc/mtpadmin/web-runtime.env | tail -1)
     if [[ "$webp" =~ ^(9199|9200)$ && -n "$websvc" ]]; then
       systemctl is-active --quiet "$websvc"&&ok "Web active slot $webp"||{ fail "Web service $websvc";((f++))||true; }
       curl -fsS --max-time 4 -H 'X-MTPADMIN-User: doctor-health' "http://127.0.0.1:$webp/healthz" >/dev/null&&ok 'Web backend health'||{ fail 'Web backend health';((f++))||true; }
-    else
-      fail 'Web runtime state'; ((f++))||true
-    fi
+    else fail 'Web runtime state'; ((f++))||true; fi
   fi
   if [[ "${WEBPROXY_ENABLED:-0}" == 1 ]]; then
-    systemctl is-active --quiet tproxy-server.service&&ok 'Telegram WEB Proxy relay'||{ fail 'Telegram WEB Proxy relay';((f++))||true; }
-    curl -fsS --max-time 4 http://127.0.0.1:8081/readyz >/dev/null&&ok 'WEB Proxy relay ready'||{ fail 'WEB Proxy relay ready';((f++))||true; }
-    ss -H -ltn 'sport = :8080'|grep -q '127.0.0.1'&&ok 'WEB Proxy relay bound to loopback'||{ fail 'WEB Proxy relay bind';((f++))||true; }
-    wp_host=${WEBPROXY_HOST:-}
-    if [[ -n "$wp_host" && -f /etc/caddy/Caddyfile ]] && grep -Fq "$wp_host" /etc/caddy/Caddyfile; then ok "WEB Proxy Caddy host $wp_host"; else fail 'WEB Proxy Caddy host'; ((f++))||true; fi
-    wpdns=$(getent ahostsv4 "$wp_host" 2>/dev/null|awk '{print $1}'|sort -u|paste -sd, -)
-    if echo ",$wpdns,"|grep -q ",$PUBLIC_IP,"; then ok "DNS A $wp_host -> $PUBLIC_IP"; else warn "WEB Proxy DNS: ${wpdns:-unresolved}, expected $PUBLIC_IP"; ((w++))||true; fi
+    if [[ "${WEBPROXY_READY:-0}" != 1 ]]; then
+      warn 'Telegram WEB Proxy provisioning incomplete; updater may safely resume it'; ((w++))||true
+    else
+      systemctl is-active --quiet tproxy-server.service&&ok 'Telegram WEB Proxy relay'||{ fail 'Telegram WEB Proxy relay';((f++))||true; }
+      curl -fsS --max-time 4 http://127.0.0.1:8081/readyz >/dev/null&&ok 'WEB Proxy relay ready'||{ fail 'WEB Proxy relay ready';((f++))||true; }
+      ss -H -ltn 'sport = :8080'|grep -q '127.0.0.1'&&ok 'WEB Proxy relay bound to loopback'||{ fail 'WEB Proxy relay bind';((f++))||true; }
+      wp_host=${WEBPROXY_HOST:-}
+      if [[ -n "$wp_host" && -f /etc/caddy/Caddyfile ]] && grep -Fq "$wp_host" /etc/caddy/Caddyfile; then ok "WEB Proxy Caddy host $wp_host"; else fail 'WEB Proxy Caddy host'; ((f++))||true; fi
+      wpdns=$(getent ahostsv4 "$wp_host" 2>/dev/null|awk '{print $1}'|sort -u|paste -sd, -)
+      if echo ",$wpdns,"|grep -q ",$PUBLIC_IP,"; then ok "DNS A $wp_host -> $PUBLIC_IP"; else warn "WEB Proxy DNS: ${wpdns:-unresolved}, expected $PUBLIC_IP"; ((w++))||true; fi
+    fi
   fi
   rss=$(ps -C telemt -o rss=|awk '{s+=$1}END{print s+0}'); ((rss<262144))&&ok "TeleMT RSS $(fmt_bytes $((rss*1024)))"||{ warn "High TeleMT RSS $(fmt_bytes $((rss*1024)))";((w++))||true; }
   avail=$(awk '/MemAvailable:/{print $2}' /proc/meminfo); ((avail>131072))&&ok "RAM available $(fmt_bytes $((avail*1024)))"||{ warn "Low available RAM $(fmt_bytes $((avail*1024)))";((w++))||true; }
