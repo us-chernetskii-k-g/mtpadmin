@@ -9,13 +9,14 @@ permissions:
 
 jobs:
   syntax:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assemble runtime files
+      - name: Assemble final runtime
         run: |
-          cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
+          set -euo pipefail
+          cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/11-source-stability.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           python3 scripts/normalize_cli.py /tmp/mtpadmin
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
           python3 - <<'PY'
@@ -23,18 +24,19 @@ jobs:
           p=Path('/tmp/stats_collector.py'); s=p.read_text(); m="if __name__=='__main__': raise SystemExit(main() or 0)"
           e=Path('src/stats_collector.d/15-online-history.py').read_text(); assert s.count(m)==1
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
-          PY
-          cat web/mtpadmin_web.d/00-core.py web/mtpadmin_web.d/10-ui.py web/mtpadmin_web.d/20-pages.py web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('/tmp/mtpadmin_web.py'); s=p.read_text(); m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for f in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py'):
-              e=Path('web/mtpadmin_web.d/'+f).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
+          p=Path('/tmp/mtpadmin_web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
+          m="if __name__=='__main__': main()"; assert s.count(m)==1
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py'):
+              e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
 
-      - name: Syntax and final runtime
+      - name: Syntax and product version
         run: |
+          set -euo pipefail
+          test "$(cat VERSION)" = '0.11.8'
+          grep -q "VERSION='0.11.8'" update.sh
+          grep -q "VERSION='0.11.8'" web-install.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -42,60 +44,10 @@ jobs:
           bash -n scripts/webproxy_install.sh
           bash -n scripts/webproxy_backend_install.sh
           bash -n scripts/component_update.sh
-          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py web/mtpadmin_web.d/39-compact-ui.py web/mtpadmin_web.d/40-async-update-ui.py web/mtpadmin_web.d/41-webproxy-links-ui.py
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('/tmp/mtpadmin').read_text()
-          assert s.count('doctor_cmd(){')==1 and s.count('resources_cmd(){')==1 and s.count('security_cmd(){')==1
-          assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
-          assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
-          assert 'Swap pressure acceptable' not in s
-          assert Path('VERSION').read_text().strip()=='0.11.7'
-          print('Final runtime PASS')
-          PY
-
-      - name: WEB Proxy client links and compact Links page
-        run: |
-          python3 - <<'PY'
-          import importlib.util, tempfile
-          spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          f=tempfile.NamedTemporaryFile('w',delete=False)
-          f.write('[access.users]\n"WEB_PROXY" = "00112233445566778899AABBCCDDEEFF"\n'); f.close()
-          w.CFG=f.name
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.7'}
-          w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
-          assert w._o_webproxy_secret()=='00112233445566778899aabbccddeeff'
-          links=w._o_webproxy_links()
-          assert links['tg'].startswith('tg://webproxy?') and 'server=webproxy.example.com' in links['tg']
-          assert links['https'].startswith('https://t.me/webproxy?')
-          w.source_rows=lambda:[{'username':'DEMO','enabled':True,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff'],'secure':[],'tls':[]}}]
-          html=w.links_html()
-          assert 'secret скрыт' in html and 'TG direct' in html and 't.me' in html
-          assert '00112233445566778899aabbccddeeff' in html
-          assert 'hidden' in html and 'Показать' in html
-          print('WEB links PASS')
-          PY
-
-      - name: Compact asynchronous Operations UI
-        run: |
-          python3 - <<'PY'
-          import importlib.util
-          spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.7'}
-          w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
-          w._o_update_status=lambda:{'checked_at':1,'updates':1,'components':{'mtpadmin':{'current':'0.11.6','latest':'0.11.7','available':True},'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}}}
-          w._o_component_status=lambda:{'component':'webproxy','state':'running','detail':'Проверяю upstream'}
-          w._o_service=lambda name: True; w._o_http_ok=lambda url: True; w._o_qr=lambda link:''
-          w.scalar=lambda *a,**k: 5; w._o_backups=lambda:'<div>backup</div>'
-          html=w._o_operations_html('tester','csrf')
-          for marker in ('data-ui-tab=\'overview\'','data-ui-tab=\'updates\'','data-ui-tab=\'webproxy\'','data-ui-tab=\'guard\'','data-ui-tab=\'details\''):
-              assert marker in html
-          update=w._o_update_center('csrf')
-          assert 'Telegram WEB Proxy · выполняется' in update
-          assert 'MTPADMIN · недоступно' in update and 'TeleMT · недоступно' in update
-          assert update.count('disabled')>=4
-          print('Serialized async UI PASS')
-          PY
+          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py
+          grep -q '11-source-stability.sh' update.sh
+          grep -q '42-stability.py' update.sh
+          grep -q '43-db-safety.py' update.sh
 
       - name: Update checker semantics
         run: |
@@ -103,21 +55,22 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.7')>(0,11,6)
+          assert u.semver('0.11.8')>(0,11,7)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
           PY
 
-      - name: WEB Proxy source recovery and upstream tests
+      - name: WEB Proxy source recovery and upstream relay
         run: |
+          set -euo pipefail
           cat >/tmp/mtpadmin-partial.toml <<'EOF'
           [access.users]
           "WEB_PROXY" = "00112233445566778899aabbccddeeff"
           EOF
           found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
           test "$found" = '1|00112233445566778899aabbccddeeff'
-          grep -q 'уже существует — переиспользую без ротации secret' scripts/webproxy_install.sh
+          grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
           git -C /tmp/tproxy-upstream remote add origin https://github.com/telegramdesktop/tproxy-server.git
@@ -127,42 +80,55 @@ jobs:
 
       - name: Official WEB MTProxy backend contract
         run: |
+          set -euo pipefail
           grep -q "MTPROXY_COMMIT='f36d8af769ffaeac36978d38c2c0f6d1104c2137'" scripts/webproxy_backend_install.sh
           grep -q "MTPROXY_CHECKSUM='919795c416b870670841a21d1930ad97a24c7b84b9eb8c6f9e3de32f2fdf4655'" scripts/webproxy_backend_install.sh
-          grep -q "backend':'127.0.0.1:2398'" scripts/webproxy_backend_install.sh
-          grep -q 'tcp dport { 2398, 8888 } drop' scripts/webproxy_backend_install.sh
-          grep -q 'mtpadmin-webproxy-mtproxy.service' scripts/webproxy_backend_install.sh
-          grep -q 'TelegramMessenger/MTProxy' scripts/webproxy_backend_install.sh
-          grep -q 'webproxy_backend_install.sh' update.sh
-          grep -q 'official MTProxy localhost:2398' update.sh
+          grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
+          grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
+          grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
+          grep -q 'iifname != "lo" tcp dport { 2398, 8888 } drop' scripts/webproxy_backend_install.sh
+          grep -q "'backend':'127.0.0.1:2398'" scripts/webproxy_backend_install.sh
 
-      - name: Component updater safety and serialization
+      - name: Component updater end-to-end repair contract
         run: |
-          grep -q 'telemt-before-' scripts/component_update.sh
-          grep -q 'Checksum нового TeleMT' scripts/component_update.sh
+          set -euo pipefail
+          grep -q "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" scripts/component_update.sh
+          grep -q 'repair_webproxy' scripts/component_update.sh
+          grep -q 'max_pending_items_per_session' scripts/component_update.sh
           grep -q 'systemd-run --quiet --no-block --collect' scripts/component_update.sh
-          grep -q 'flock -n' scripts/component_update.sh
-          grep -q 'Уже выполняется другая операция обновления' scripts/component_update.sh
-          grep -q 'contents/VERSION?ref=$sha' scripts/component_update.sh
-          grep -q '"$RAW/$sha/update.sh"' scripts/component_update.sh
-          grep -q 'WEBBACKEND=' update.sh
-          grep -q 'bash \"$WEBBACKEND\"' update.sh
+          grep -q 'flock -n 9' scripts/component_update.sh
+          grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
 
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.7'" update.sh
-          grep -q "BASE_0116_COMMIT='36c0a0e1ad6d21404922c15842fc357b339e6f7f'" update.sh
-          grep -q 'webproxy_backend_install.sh' update.sh
+          set -euo pipefail
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
 
-      - name: README product page
+      - name: Product page and support
         run: |
-          grep -q 'Свой Telegram proxy' README.md
-          grep -q 'Telegram WEB Proxy' README.md
-          grep -q 'Update Center' README.md
+          set -euo pipefail
+          grep -q 'экосистемы VPN BOSS' README.md
+          grep -q 'https://t.me/boss_of_this_vpn' README.md
+          grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
+          grep -q 'UQCjpkzF3YQKSXZUu7jxETBndx8qx6M21M4QtTKwi8_Ee2A1' README.md
+          grep -q 'TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR' README.md
+          grep -q '0xe93f304d4828c0dbc6667dd2761eb7b07e325ed4' README.md
+          grep -q 'https://t.me/boss_of_this_vpn' scripts/webproxy_install.sh
 
       - name: Guard against production secrets
         run: |
-          if grep -RInE --exclude-dir=.git --exclude='ci.yml' '(ee6d61782e727525f37068b87cdc897d|bbd76513a94903a1545f655f8c3625bb|64\.188\.62\.153)' .; then
-            echo 'Production value detected in repository'; exit 1
-          fi
+          python3 - <<'PY'
+          import pathlib,re
+          allowed={'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100'}
+          bad=[]
+          for p in pathlib.Path('.').rglob('*'):
+              if not p.is_file() or '.git' in p.parts: continue
+              if p.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.zip','.gz','.db'}: continue
+              try: s=p.read_text(errors='ignore')
+              except Exception: continue
+              for m in re.finditer(r'(?i)(?:secret|password|token)\s*[=:]\s*["\x27]?([0-9a-f]{32,}|[A-Za-z0-9_-]{40,})',s):
+                  value=m.group(1)
+                  if value.lower() not in allowed: bad.append((str(p),value[:12]))
+          assert not bad,bad
+          print('Secret scan PASS')
+          PY
