@@ -54,8 +54,9 @@ esac
 # the resumable installer below finishes successfully.
 bash "$TMP/update-090.sh"
 
+CACHE_BUST="${VERSION}-$(date +%s)"
 for file in webproxy_install.sh update_check.py component_update.sh; do
-  curl -fsSL --retry 3 "$ROOT/main/scripts/$file" -o "$TMP/$file" || die "Не удалось скачать scripts/$file"
+  curl -fsSL --retry 3 "$ROOT/main/scripts/$file?mtpadmin=$CACHE_BUST" -o "$TMP/$file" || die "Не удалось скачать scripts/$file"
 done
 bash -n "$TMP/webproxy_install.sh" || die 'WEB Proxy installer syntax invalid.'
 bash -n "$TMP/component_update.sh" || die 'Component updater syntax invalid.'
