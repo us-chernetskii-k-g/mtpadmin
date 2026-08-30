@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
-VERSION='0.7.0'
+VERSION='0.7.1'
 RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'
 STATE='/etc/mtpadmin/state.env'
 SERVICE='mtpadmin-telemt.service'
@@ -209,7 +209,8 @@ wait_heartbeat scanner_meta "$SCANNERSVC" || { journalctl -u "$SCANNERSVC" -n 60
 nft list table inet mtpadmin_guard >/dev/null 2>&1 || die 'Scanner Guard nftables table отсутствует.'
 
 write_web_unit(){
-  local slot="$1" port="$2" app="$3" file="/etc/systemd/system/mtpadmin-web-$slot.service"
+  local slot="$1" port="$2" app="$3" file
+  file="/etc/systemd/system/mtpadmin-web-$slot.service"
   cat > "$file" <<EOF
 [Unit]
 Description=MTPADMIN web panel ($slot slot)
