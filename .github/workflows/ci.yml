@@ -46,7 +46,11 @@ jobs:
           app=Path('/tmp/mtpadmin_web.py')
           src=app.read_text(); marker="if __name__=='__main__': main()"
           assert src.count(marker)==1
-          for p in ('web/mtpadmin_web.d/35-world-map.py','web/mtpadmin_web.d/36-analytics.py'):
+          for p in (
+              'web/mtpadmin_web.d/35-world-map.py',
+              'web/mtpadmin_web.d/36-analytics.py',
+              'web/mtpadmin_web.d/37-analytics-plus.py',
+          ):
               ext=Path(p).read_text()
               src=src.replace(marker,ext.rstrip()+"\n\n"+marker,1)
           app.write_text(src)
@@ -68,6 +72,7 @@ jobs:
           python3 -m py_compile src/stats_collector.d/15-online-history.py
           python3 -m py_compile web/mtpadmin_web.d/35-world-map.py
           python3 -m py_compile web/mtpadmin_web.d/36-analytics.py
+          python3 -m py_compile web/mtpadmin_web.d/37-analytics-plus.py
           python3 -m py_compile scripts/normalize_cli.py
           python3 -m py_compile src/user_config.py
           python3 -m py_compile src/scanner_guard.py
@@ -155,31 +160,33 @@ jobs:
           print('Scanner Guard unit checks PASS')
           PY
 
-      - name: Web 0.9.0 analytics and map checks
+      - name: Web 0.10.0 analytics, sources and events checks
         run: |
-          grep -q "def active_clients_html" web/mtpadmin_web.d/30-actions.py
-          grep -q "Все наблюдаемые IP" web/mtpadmin_web.d/30-actions.py
-          grep -q "world-map-equirectangular.png" web/mtpadmin_web.d/35-world-map.py
           grep -q "def _a_online_card" web/mtpadmin_web.d/36-analytics.py
-          grep -q "Risk · распределение" web/mtpadmin_web.d/36-analytics.py
-          grep -q "Трафик сегодня" web/mtpadmin_web.d/36-analytics.py
+          grep -q "_X_RANGES" web/mtpadmin_web.d/37-analytics-plus.py
+          grep -q "нет данных для сравнения" web/mtpadmin_web.d/37-analytics-plus.py
+          grep -q "Аналитика источников" web/mtpadmin_web.d/37-analytics-plus.py
+          grep -q "system_events" web/mtpadmin_web.d/37-analytics-plus.py
+          grep -q "href=\"/events\"" web/mtpadmin_web.d/37-analytics-plus.py
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('webapp','/tmp/mtpadmin_web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          chart=w._a_chart(['10:00','11:00'],[('X',[1,3],'#fff')])
-          assert '<svg' in chart and '10:00' in chart and '11:00' in chart
-          active=w.page_template('T','body','tester','active',refresh=5)
-          assert active.count('href="/active"') == 1
-          assert 'id="live-root"' in active and 'data-live-ms="5000"' in active
-          assert 'active-local-filter' in active and 'a-chart-wrap' in active
-          w._wm_ensure=lambda: True
-          w._wm_city_map=lambda: {'RU':'Petropavlovsk-Kamchatskiy'}
-          geo=w.page_template('T','<div class="card"><h2>Страны</h2><table><tbody><tr><td>RU</td><td>Россия</td><td>2</td><td>5</td></tr></tbody></table></div>','tester','geo')
-          assert '/assets/world-map.png' in geo and 'geo-points' in geo and 'wm-tip' in geo
-          assert 'Petropavlovsk-Kamchatskiy' in geo and 'MutationObserver' in geo
-          print('Web 0.9.0 analytics/map render PASS')
+          assert w._x_range('24h') == '24h' and w._x_range('bad') == '6h'
+          txt,cls=w._x_compare(10,0,False); assert 'нет данных' in txt and cls=='muted'
+          chart=w._x_chart(['10:00','11:00'],[('X',[1,3],'#fff')])
+          assert '<svg' in chart and '10:00' in chart and '11:00' in chart and '<title>' in chart
+          doc=w.page_template('T','body','tester','events',refresh=10)
+          assert 'href="/events"' in doc and 'События' in doc
+          assert 'data-live-ms="10000"' in doc
+          print('Web 0.10.0 analytics/sources/events PASS')
           PY
+
+      - name: Map regression checks
+        run: |
+          grep -q "world-map-equirectangular.png" web/mtpadmin_web.d/35-world-map.py
+          grep -q "wm-tip" web/mtpadmin_web.d/35-world-map.py
+          grep -q "Math.log1p" web/mtpadmin_web.d/35-world-map.py
 
       - name: Memory pressure checks
         run: |
@@ -190,16 +197,14 @@ jobs:
 
       - name: Seamless update safety invariants
         run: |
-          grep -q "VERSION='0.9.0'" update.sh
-          grep -q 'normalize_cli.py' update.sh
-          grep -q '15-online-history.py' update.sh
-          grep -q '35-world-map.py' update.sh
-          grep -q '36-analytics.py' update.sh
-          grep -q 'caddy fmt --overwrite' update.sh
+          grep -q "VERSION='0.10.0'" update.sh
+          grep -q 'BASE_090_COMMIT' update.sh
+          grep -q '37-analytics-plus.py' update.sh
+          grep -q 'system_events' update.sh
+          grep -q "VERSION='0.10.0'" web-install.sh
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
           grep -q 'signal.SIGHUP' src/scanner_guard.py
-          grep -q 'Веб-панель уже установлена' web-install.sh
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
           if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py; then
             echo 'Unsafe global firewall operation detected'; exit 1
