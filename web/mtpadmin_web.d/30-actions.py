@@ -11,6 +11,7 @@
             f=self.form()
             if not csrf_ok(self.user(),f.get('csrf','')):
                 self.send_html('CSRF','<div class="card"><h1>Запрос отклонён</h1><p>CSRF token недействителен. Обновите страницу.</p></div>','dashboard',403); return
+            if handle_guard_post(self,path,f): return
             if path=='/action/source-add':
                 name=safe_source_name(f.get('name')); argv=['add',name]
                 tag=(f.get('ad_tag') or '').strip()
