@@ -2,7 +2,7 @@
 import argparse, ipaddress, json, os, re, signal, sqlite3, subprocess, sys, time, urllib.request
 from pathlib import Path
 
-VERSION='0.7.0'
+VERSION='0.7.1'
 STATE=Path(os.environ.get('MTPADMIN_STATE','/etc/mtpadmin/state.env'))
 DB=Path(os.environ.get('MTPADMIN_DB','/var/lib/mtpadmin/stats.db'))
 API='http://127.0.0.1:9091'
