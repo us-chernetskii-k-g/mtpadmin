@@ -1,0 +1,124 @@
+name: MTPADMIN Stability
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  stability:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble audited runtime
+        run: |
+          set -euo pipefail
+          cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/11-source-stability.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
+          python3 scripts/normalize_cli.py /tmp/mtpadmin
+          cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/stats.py'); s=p.read_text(); m="if __name__=='__main__': raise SystemExit(main() or 0)"
+          e=Path('src/stats_collector.d/15-online-history.py').read_text(); assert s.count(m)==1
+          p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
+          p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
+          m="if __name__=='__main__': main()"; assert s.count(m)==1
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py'):
+              e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
+          p.write_text(s)
+          PY
+
+      - name: Syntax
+        run: |
+          set -euo pipefail
+          bash -n /tmp/mtpadmin
+          bash -n scripts/webproxy_install.sh
+          bash -n scripts/webproxy_backend_install.sh
+          bash -n scripts/component_update.sh
+          python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
+
+      - name: SQLite FD regression
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, sqlite3, tempfile
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          fd,path=tempfile.mkstemp(); os.close(fd)
+          c=sqlite3.connect(path); c.execute('create table t(x integer)'); c.execute('insert into t values(1)'); c.commit(); c.close()
+          w.DB=path
+          before=len(os.listdir('/proc/self/fd'))
+          for _ in range(500): assert w.scalar('select x from t')==1
+          after=len(os.listdir('/proc/self/fd'))
+          assert after-before <= 3, (before,after)
+          print('FD regression PASS',before,after)
+          PY
+
+      - name: Source editor contract
+        run: |
+          python3 - <<'PY'
+          import importlib.util,tempfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('u','src/user_config.py'); u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
+          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"DEMO" = "00112233445566778899aabbccddeeff"\n')
+          u.CFG=p
+          class A: pass
+          a=A(); a.name='DEMO'; a.ad_tag='ffeeddccbbaa99887766554433221100'; a.max_conns='123'; a.max_ips='7'; u.edit(a)
+          s=p.read_text(); assert '[access.user_ad_tags]' in s and '123' in s and '7' in s
+          a.ad_tag='none'; a.max_conns='none'; a.max_ips='none'; u.edit(a)
+          s=p.read_text(); assert 'ffeeddccbbaa99887766554433221100' not in s
+          print('Source edit PASS')
+          PY
+
+      - name: Config and runtime merge contract
+        run: |
+          python3 - <<'PY'
+          import importlib.util,tempfile
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"A"="00112233445566778899aabbccddeeff"\n"B"="ffeeddccbbaa99887766554433221100"\n')
+          w.CFG=str(p); w.state=lambda:{'PROFILE':'A'}
+          w.api_json=lambda path,**kw: [{'username':'A','enabled':True,'in_runtime':True,'user_ad_tag':None,'max_tcp_conns':None,'max_unique_ips':None,'links':{'classic':['tg://proxy?server=x&port=1&secret=00112233445566778899aabbccddeeff']}}] if path=='/v1/users' else {}
+          rows={x['username']:x for x in w.source_rows()}
+          assert rows['A']['in_runtime'] is True and rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
+          html=w.sources_html('tester','csrf'); assert 'CONFIG ONLY' in html and 'Настроить' in html
+          print('Config/runtime merge PASS')
+          PY
+
+      - name: WEB Proxy production contracts
+        run: |
+          set -euo pipefail
+          grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
+          grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
+          grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
+          grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
+          grep -q "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" scripts/component_update.sh
+          grep -q 'repair_webproxy' scripts/component_update.sh
+
+      - name: Product and support contract
+        run: |
+          set -euo pipefail
+          grep -q 'https://t.me/boss_of_this_vpn' README.md
+          grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
+          grep -q 'UQCjpkzF3YQKSXZUu7jxETBndx8qx6M21M4QtTKwi8_Ee2A1' README.md
+          grep -q 'TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR' README.md
+          grep -q '0xe93f304d4828c0dbc6667dd2761eb7b07e325ed4' README.md
+
+      - name: Guard against accidental production secrets
+        run: |
+          python3 - <<'PY'
+          import pathlib,re
+          bad=[]
+          for p in pathlib.Path('.').rglob('*'):
+              if not p.is_file() or '.git' in p.parts: continue
+              if p.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.zip','.gz','.db'}: continue
+              try: s=p.read_text(errors='ignore')
+              except Exception: continue
+              for m in re.finditer(r'(?i)(?:secret|password|token)\s*[=:]\s*["\x27]?([0-9a-f]{32,}|[A-Za-z0-9_-]{40,})',s):
+                  value=m.group(1)
+                  if value.lower() not in {'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100'}:
+                      bad.append((str(p),value[:12]))
+          assert not bad,bad
+          print('Secret scan PASS')
+          PY
