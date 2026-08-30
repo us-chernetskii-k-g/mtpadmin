@@ -60,7 +60,9 @@ WEB_INSTALLED=0
 if [[ -f "$WEBAPP" ]] || systemctl cat "$WEBSVC" >/dev/null 2>&1; then
   WEB_INSTALLED=1
   : > "$TMP/mtpadmin_web.py"
-  for part in 00-core.py 05-version.py 10-ui.py 15-guard-ui.py 20-pages.py 25-guard-route.py 30-actions.py; do
+  # These four files intentionally continue one another inside functions/classes.
+  # Do not insert fragments between them.
+  for part in 00-core.py 10-ui.py 20-pages.py 30-actions.py; do
     curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/$part" >> "$TMP/mtpadmin_web.py" || die "Не удалось скачать web fragment $part"
   done
 fi
