@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.1'
+VERSION='0.11.2'
 BASE_090_COMMIT='e7475ec650eed8b85aebb2311b74a3ef09a115b2'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 TMP=$(mktemp -d)
@@ -18,7 +18,7 @@ python3 - "$TMP/update-090.sh" <<'PY'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
-s=s.replace('0.9.0','0.11.1')
+s=s.replace('0.9.0','0.11.2')
 old='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/36-analytics.py" -o "$TMP/analytics-extension.py" || die 'Не удалось скачать analytics extension'\n  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" <<'PYWEBEXT'\n'''
 new='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/36-analytics.py" -o "$TMP/analytics-extension.py" || die 'Не удалось скачать analytics extension'\n  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/37-analytics-plus.py" -o "$TMP/analytics-plus-extension.py" || die 'Не удалось скачать analytics-plus extension'\n  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/38-operations.py" -o "$TMP/operations-extension.py" || die 'Не удалось скачать operations extension'\n  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" <<'PYWEBEXT'\n'''
 if s.count(old)!=1: raise SystemExit('unexpected 0.9 web extension block')
@@ -41,16 +41,17 @@ s=s.replace(needle,logger,1)
 p.write_text(s,encoding='utf-8')
 PY
 
-bash -n "$TMP/update-090.sh" || die '0.11.1 сформировал невалидный updater.'
-grep -q "VERSION='0.11.1'" "$TMP/update-090.sh" || die 'Версия updater не обновилась.'
+bash -n "$TMP/update-090.sh" || die '0.11.2 сформировал невалидный updater.'
+grep -q "VERSION='0.11.2'" "$TMP/update-090.sh" || die 'Версия updater не обновилась.'
 grep -q '38-operations.py' "$TMP/update-090.sh" || die 'Operations extension не встроен.'
 
 case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
-  2) MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-090.sh" || die 'Вложенная сборка update-engine не прошла.'; ok 'Nested 0.11.1 updater transformation PASS'; exit 0 ;;
-  1) ok 'Update wrapper 0.11.1 transformation PASS'; exit 0 ;;
+  2) MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-090.sh" || die 'Вложенная сборка update-engine не прошла.'; ok 'Nested 0.11.2 updater transformation PASS'; exit 0 ;;
+  1) ok 'Update wrapper 0.11.2 transformation PASS'; exit 0 ;;
 esac
 
-# Core/web first. Incomplete WEB Proxy provisioning is warning-only in 0.11.1 doctor.
+# Core/web first. Incomplete WEB Proxy provisioning remains warning-only until
+# the resumable installer below finishes successfully.
 bash "$TMP/update-090.sh"
 
 for file in webproxy_install.sh update_check.py component_update.sh; do
@@ -104,7 +105,8 @@ if ! command -v qrencode >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; 
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qrencode >/dev/null || true
 fi
 
-# Resume/retry WEB Proxy provisioning. The installer reuses the already-created WEB_PROXY source.
+# Resume/retry WEB Proxy provisioning. Existing WEB_PROXY source is reused
+# without secret rotation, so a failed first install is safe to repeat.
 bash /usr/local/lib/mtpadmin/webproxy_install.sh
 
 /usr/local/lib/mtpadmin/update_check.py >/dev/null 2>&1 || true
@@ -121,4 +123,4 @@ PY
 echo
 info 'Финальная проверка MTPADMIN + WEB Proxy...'
 /usr/local/bin/mtpadmin doctor
-ok 'MTPADMIN 0.11.1 установлен: Operations + Update Center + Telegram WEB Proxy.'
+ok 'MTPADMIN 0.11.2 установлен: Operations + Update Center + Telegram WEB Proxy.'
