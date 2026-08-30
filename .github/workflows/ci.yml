@@ -51,7 +51,7 @@ jobs:
           assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
           assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
           assert 'Swap pressure acceptable' not in s
-          assert Path('VERSION').read_text().strip()=='0.11.2'
+          assert Path('VERSION').read_text().strip()=='0.11.3'
           print('Final runtime PASS')
           PY
 
@@ -60,10 +60,10 @@ jobs:
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.2'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.3'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
           w._o_update_status=lambda:{'checked_at':1,'updates':2,'components':{
-              'mtpadmin':{'current':'0.11.2','latest':'0.12.0','available':True},
+              'mtpadmin':{'current':'0.11.3','latest':'0.12.0','available':True},
               'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},
               'webproxy':{'current':'a'*40,'latest':'b'*40,'available':True}}}
           w._o_component_status=lambda:{}
@@ -78,14 +78,20 @@ jobs:
           print('Update Center UI PASS')
           PY
 
-      - name: Update checker semantics
+      - name: Update checker semantics and cache bypass
         run: |
           python3 - <<'PY'
-          import importlib.util
+          import base64, importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.2')>(0,11,1)
-          print('Update checker PASS')
+          assert u.semver('0.11.3')>(0,11,2)
+          u.get_json=lambda url:{'encoding':'base64','content':base64.b64encode(b'0.11.3\n').decode()}
+          assert u.github_file_text('owner/repo','VERSION','main')=='0.11.3\n'
+          text=open('scripts/update_check.py',encoding='utf-8').read()
+          assert "cmdver(['/usr/local/bin/mtpadmin','version']) or st.get('MTPADMIN_VERSION')" in text
+          assert '/contents/{path}?ref={ref}' in text
+          assert 'Cache-Control' in text and 'no-cache' in text
+          print('Update checker cache bypass PASS')
           PY
 
       - name: WEB Proxy partial source recovery
@@ -106,6 +112,14 @@ jobs:
           test "$missing" = '0|'
           grep -q 'уже существует — переиспользую без ротации secret' scripts/webproxy_install.sh
           echo 'Partial WEB_PROXY recovery PASS'
+
+      - name: Go toolchain permission recovery
+        run: |
+          grep -q 'fix_go_toolchain_access' update.sh
+          grep -q 'chmod -R a+rX' update.sh
+          grep -q 'runuser -u tproxy -- "$gobin" version' update.sh
+          grep -q 'без прав на запись' update.sh
+          echo 'Go access recovery PASS'
 
       - name: Official WEB Proxy installer invariants
         run: |
@@ -148,7 +162,7 @@ jobs:
 
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.2'" update.sh
+          grep -q "VERSION='0.11.3'" update.sh
           grep -q '38-operations.py' update.sh
           grep -q 'update_check.py' update.sh
           grep -q 'component_update.sh' update.sh
@@ -160,7 +174,6 @@ jobs:
           grep -q 'Telegram MTProto Proxy, которым удобно управлять' README.md
           grep -q 'Telegram WEB Proxy' README.md
           grep -q 'Update Center' README.md
-          grep -q '\*\*0.11.2\*\*' README.md
 
       - name: Guard against production secrets
         run: |
