@@ -47,7 +47,7 @@ def _links_mask(link):
         p=urllib.parse.urlsplit(link)
         q=urllib.parse.parse_qs(p.query)
         host=(q.get('server') or [''])[0]
-        if p.scheme=='tg': return f'tg://webproxy · {host}'
+        if p.scheme=='tg' and p.netloc=='webproxy': return f'tg://webproxy · {host}'
         if p.netloc=='t.me' and p.path=='/webproxy': return f't.me/webproxy · {host}'
         if p.scheme in ('tg','https') and 'secret' in q: return f'{p.scheme}://… · secret скрыт'
     except Exception:
@@ -91,8 +91,6 @@ def _compact_webproxy_block():
             "<div class='muted' style='margin-top:9px'>Обычный заход на hostname должен показывать настоящий публичный сайт. Relay активируется только WEB-capability клиента.</div></div>")
 
 
-# Replace the old verbose Links page with compact cards. Full URLs are hidden by
-# default so screenshots do not casually expose proxy secrets.
 def links_html():
     users=source_rows(); blocks=[_compact_webproxy_block()]
     for i,u in enumerate(users):
@@ -105,24 +103,18 @@ def links_html():
     return "<div class='a-head' style='margin-bottom:10px'><div><h1>Ссылки подключения</h1><div class='muted'>Secret скрыты по умолчанию. Для телефона используйте копирование или QR.</div></div></div>"+''.join(blocks)
 
 
-# Refresh WEB Proxy card in Operations with both link forms once the recovered
-# secret is available.
 _old_o_webproxy_card_116=_o_webproxy_card
 def _o_webproxy_card(csrf):
     base=_old_o_webproxy_card_116(csrf)
     links=_o_webproxy_links()
     if not links:
         return base
-    # Old card already contains the hostname controls and source. Replace only
-    # the stale single-link area / message with a compact pair.
     pair=("<div class='ui-summary' style='margin-top:12px'><span class='ui-chip ok'>Клиентские ссылки готовы</span>"
           "<span class='muted'>TG direct + t.me</span></div>"
           +_links_item('TG direct',links['tg'],'op_webproxy_tg',True)
           +_links_item('t.me',links['https'],'op_webproxy_https',False))
     if "<div class='muted'>WEB link ещё не сформирован.</div>" in base:
         return base.replace("<div class='muted'>WEB link ещё не сформирован.</div>",pair,1)
-    # If the old single link exists, append the two canonical forms rather than
-    # exposing a raw URL immediately.
     return base+pair
 
 
