@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
-VERSION='0.6.0'
+VERSION='0.6.1'
 RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'
 STATE='/etc/mtpadmin/state.env'
 SERVICE='mtpadmin-telemt.service'
@@ -90,9 +90,9 @@ python3 - <<'PY'
 from pathlib import Path
 p=Path('/etc/mtpadmin/state.env'); lines=[]; done=False
 for line in p.read_text().splitlines():
-    if line.startswith('MTPADMIN_VERSION='): lines.append("MTPADMIN_VERSION='0.6.0'"); done=True
+    if line.startswith('MTPADMIN_VERSION='): lines.append("MTPADMIN_VERSION='0.6.1'"); done=True
     else: lines.append(line)
-if not done: lines.append("MTPADMIN_VERSION='0.6.0'")
+if not done: lines.append("MTPADMIN_VERSION='0.6.1'")
 p.write_text('\n'.join(lines)+'\n')
 PY
 chmod 0600 "$STATE"
