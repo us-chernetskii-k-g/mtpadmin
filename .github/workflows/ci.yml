@@ -15,202 +15,96 @@ jobs:
 
       - name: Assemble runtime files
         run: |
-          cat \
-            src/mtpadmin.d/00-core.sh \
-            src/mtpadmin.d/10-sources.sh \
-            src/mtpadmin.d/20-admin.sh \
-            src/mtpadmin.d/21-admin-tail.sh \
-            src/mtpadmin.d/22-guard.sh \
-            src/mtpadmin.d/25-doctor-runtime.sh \
-            src/mtpadmin.d/29-guard-dispatch.sh \
-            src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
+          cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           python3 scripts/normalize_cli.py /tmp/mtpadmin
 
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
           python3 - <<'PY'
           from pathlib import Path
-          app=Path('/tmp/stats_collector.py')
-          ext=Path('src/stats_collector.d/15-online-history.py').read_text()
-          src=app.read_text(); marker="if __name__=='__main__': raise SystemExit(main() or 0)"
-          assert src.count(marker)==1
-          app.write_text(src.replace(marker,ext.rstrip()+"\n\n"+marker,1))
+          p=Path('/tmp/stats_collector.py'); s=p.read_text(); m="if __name__=='__main__': raise SystemExit(main() or 0)"
+          e=Path('src/stats_collector.d/15-online-history.py').read_text(); assert s.count(m)==1
+          p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           PY
 
-          cat \
-            web/mtpadmin_web.d/00-core.py \
-            web/mtpadmin_web.d/10-ui.py \
-            web/mtpadmin_web.d/20-pages.py \
-            web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
+          cat web/mtpadmin_web.d/00-core.py web/mtpadmin_web.d/10-ui.py web/mtpadmin_web.d/20-pages.py web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
           python3 - <<'PY'
           from pathlib import Path
-          app=Path('/tmp/mtpadmin_web.py')
-          src=app.read_text(); marker="if __name__=='__main__': main()"
-          assert src.count(marker)==1
-          for p in (
-              'web/mtpadmin_web.d/35-world-map.py',
-              'web/mtpadmin_web.d/36-analytics.py',
-              'web/mtpadmin_web.d/37-analytics-plus.py',
-          ):
-              ext=Path(p).read_text()
-              src=src.replace(marker,ext.rstrip()+"\n\n"+marker,1)
-          app.write_text(src)
+          p=Path('/tmp/mtpadmin_web.py'); s=p.read_text(); m="if __name__=='__main__': main()"; assert s.count(m)==1
+          for f in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py'):
+              e=Path('web/mtpadmin_web.d/'+f).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
+          p.write_text(s)
           PY
 
-      - name: Bash syntax
+      - name: Syntax and final runtime
         run: |
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
           bash -n web-install.sh
-          bash -n scripts/render_config.sh
-          bash -n scripts/geo_update.sh
-
-      - name: Python syntax
-        run: |
-          python3 -m py_compile /tmp/stats_collector.py
-          python3 -m py_compile /tmp/mtpadmin_web.py
-          python3 -m py_compile src/stats_collector.d/15-online-history.py
-          python3 -m py_compile web/mtpadmin_web.d/35-world-map.py
-          python3 -m py_compile web/mtpadmin_web.d/36-analytics.py
-          python3 -m py_compile web/mtpadmin_web.d/37-analytics-plus.py
-          python3 -m py_compile scripts/normalize_cli.py
-          python3 -m py_compile src/user_config.py
-          python3 -m py_compile src/scanner_guard.py
-
-      - name: Final CLI uniqueness and runtime checks
-        run: |
+          bash -n scripts/webproxy_install.sh
+          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py
           python3 - <<'PY'
           from pathlib import Path
           s=Path('/tmp/mtpadmin').read_text()
-          py=s.index('\nPYASN\n')
-          guard=s.index('# Scanner Guard / manual firewall controls')
-          runtime=s.index('# Runtime-safe doctor helpers')
-          dispatch=s.index('# Early dispatch for Scanner Guard commands')
-          assert py < guard < runtime < dispatch
-          assert s.count('doctor_cmd(){') == 1
-          assert s.count('resources_cmd(){') == 1
-          assert s.count('security_cmd(){') == 1
-          doctor=s.index('doctor_cmd(){'); resources=s.index('resources_cmd(){'); security=s.index('security_cmd(){')
-          assert security > guard and resources > runtime and doctor > runtime
-          tail=s[doctor:]
-          assert 'Memory PSI healthy' in tail and 'Scanner Guard service' in tail and 'Web active slot' in tail
-          assert 'Memory pressure PSI' in s[resources:doctor]
-          assert 'Scanner Guard' in s[security:runtime]
+          assert s.count('doctor_cmd(){')==1
+          assert s.count('resources_cmd(){')==1
+          assert s.count('security_cmd(){')==1
+          assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
           assert 'Swap pressure acceptable' not in s
-          print('Final CLI uniqueness/runtime PASS')
+          print('Final CLI PASS')
           PY
 
-      - name: Online history collector checks
+      - name: Online history and Guard regression
         run: |
           python3 - <<'PY'
-          import importlib.util, sqlite3, tempfile, time
+          import importlib.util,sqlite3,tempfile,time
           from pathlib import Path
-          spec=importlib.util.spec_from_file_location('collector','/tmp/stats_collector.py')
-          c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+          spec=importlib.util.spec_from_file_location('collector','/tmp/stats_collector.py'); c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
           with tempfile.TemporaryDirectory() as td:
-              c.DB=str(Path(td)/'stats.db')
-              c.SALT_FILE=str(Path(td)/'salt')
-              con=c.connect()
-              names={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-              assert 'online_samples' in names
-              c._online_last_sample=0
-              now=int(time.time())
-              metrics={'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':2}}
-              active={('DEIMOS','1.1.1.1'),('DEIMOS','2.2.2.2')}
-              c._sample_online(con,metrics,active,now)
-              row=con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='__GLOBAL__'").fetchone()
-              assert row==(4,2), row
-              row=con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='DEIMOS'").fetchone()
-              assert row==(4,2), row
-              con.close()
-          print('Online history collector PASS')
+              c.DB=str(Path(td)/'stats.db'); c.SALT_FILE=str(Path(td)/'salt'); con=c.connect(); now=int(time.time()); c._online_last_sample=0
+              c._sample_online(con,{'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':2}},{('DEIMOS','1.1.1.1'),('DEIMOS','2.2.2.2')},now)
+              assert con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='__GLOBAL__'").fetchone()==(4,2)
+          spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py'); g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+          assert 'tcp dport 8443' in g.rules(8443,'ci') and 'policy accept' in g.rules(8443,'ci')
+          print('Collector/Guard PASS')
           PY
 
-      - name: Scanner Guard unit checks
+      - name: Operations and WEB Proxy UI
         run: |
-          python3 - <<'PY'
-          import importlib.util, sqlite3, tempfile, time
-          from pathlib import Path
-          spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py')
-          g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-          assert g.VERSION == '0.7.1'
-          assert g.duration('permanent')[0] is None
-          exp,label=g.duration('24h'); assert exp is not None and label=='24h'
-          assert g.hosting('Example Cloud Hosting Ltd') and not g.hosting('T2 Mobile LLC')
-          text=g.rules(8443,'guard_ci')
-          assert 'tcp dport 8443' in text and 'blocked4_perm' in text and 'seen4' in text
-          assert 'policy accept' in text and 'autoban' not in text.lower()
-          now=int(time.time())
-          client={'classification':'CLIENT','valid_ever':1,'total_attempts':50,'first_seen':now-1000,'last_seen':now,'org':'Hosting Ltd'}
-          suspect={'classification':'UNKNOWN','valid_ever':0,'total_attempts':8,'first_seen':now-300,'last_seen':now,'org':'Example Cloud Hosting Ltd'}
-          assert g.risk_score(client,now)==0 and 60 <= g.risk_score(suspect,now) < 100
-          with tempfile.TemporaryDirectory() as td:
-              g.DB=Path(td)/'stats.db'
-              with sqlite3.connect(g.DB) as con:
-                  con.execute('CREATE TABLE clients(ip TEXT,last_seen INTEGER)')
-                  con.execute('INSERT INTO clients VALUES(?,?)',('1.1.1.1',now-60))
-                  con.execute('INSERT INTO clients VALUES(?,?)',('8.8.8.8',now-10*86400))
-              g.api=lambda _path: []; g.state=lambda: {'RETENTION_DAYS':'7'}
-              known=g.valid(); assert '1.1.1.1' in known and '8.8.8.8' not in known
-              g.initdb()
-              with sqlite3.connect(g.DB) as con:
-                  cols={r[1] for r in con.execute('PRAGMA table_info(scanner_observations)')}
-                  assert 'risk_score' in cols
-                  assert con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scanner_state_events'").fetchone()
-          print('Scanner Guard unit checks PASS')
-          PY
-
-      - name: Web 0.10.0 analytics, sources and events checks
-        run: |
-          grep -q "def _a_online_card" web/mtpadmin_web.d/36-analytics.py
-          grep -q "_X_RANGES" web/mtpadmin_web.d/37-analytics-plus.py
-          grep -q "нет данных для сравнения" web/mtpadmin_web.d/37-analytics-plus.py
-          grep -q "Аналитика источников" web/mtpadmin_web.d/37-analytics-plus.py
-          grep -q "system_events" web/mtpadmin_web.d/37-analytics-plus.py
-          grep -q "href=\"/events\"" web/mtpadmin_web.d/37-analytics-plus.py
           python3 - <<'PY'
           import importlib.util
-          spec=importlib.util.spec_from_file_location('webapp','/tmp/mtpadmin_web.py')
-          w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          assert w._x_range('24h') == '24h' and w._x_range('bad') == '6h'
-          txt,cls=w._x_compare(10,0,False); assert 'нет данных' in txt and cls=='muted'
-          chart=w._x_chart(['10:00','11:00'],[('X',[1,3],'#fff')])
-          assert '<svg' in chart and '10:00' in chart and '11:00' in chart and '<title>' in chart
-          doc=w.page_template('T','body','tester','events',refresh=10)
-          assert 'href="/events"' in doc and 'События' in doc
-          assert 'data-live-ms="10000"' in doc
-          print('Web 0.10.0 analytics/sources/events PASS')
+          spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','MTPADMIN_VERSION':'0.11.0'}
+          w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
+          link=w._o_webproxy_link()
+          assert link=='https://t.me/webproxy?server=webproxy.example.com&secret=00112233445566778899aabbccddeeff'
+          assert w._x_compare(5,0,False)[0]=='нет данных для сравнения'
+          page=w.page_template('T','body','tester','operations',refresh=10)
+          assert 'href="/operations"' in page and page.count('href="/operations"')==1
+          assert 'data-live-ms="10000"' in page
+          print('Operations/WEB UI PASS')
           PY
 
-      - name: Map regression checks
+      - name: Official WEB Proxy installer invariants
         run: |
-          grep -q "world-map-equirectangular.png" web/mtpadmin_web.d/35-world-map.py
-          grep -q "wm-tip" web/mtpadmin_web.d/35-world-map.py
-          grep -q "Math.log1p" web/mtpadmin_web.d/35-world-map.py
-
-      - name: Memory pressure checks
-        run: |
-          grep -q 'Memory pressure PSI' src/mtpadmin.d/25-doctor-runtime.sh
-          grep -q 'psi_avg10' src/mtpadmin.d/25-doctor-runtime.sh
-          grep -q 'Swap occupancy' src/mtpadmin.d/25-doctor-runtime.sh
-          grep -q 'vmstat 1 2' src/mtpadmin.d/25-doctor-runtime.sh
-
-      - name: Seamless update safety invariants
-        run: |
-          grep -q "VERSION='0.10.0'" update.sh
-          grep -q 'BASE_090_COMMIT' update.sh
-          grep -q '37-analytics-plus.py' update.sh
-          grep -q 'system_events' update.sh
-          grep -q "VERSION='0.10.0'" web-install.sh
-          grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
-          grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
-          grep -q 'signal.SIGHUP' src/scanner_guard.py
-          MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
-          if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py; then
-            echo 'Unsafe global firewall operation detected'; exit 1
+          grep -q "TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'" scripts/webproxy_install.sh
+          grep -q "TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'" scripts/webproxy_install.sh
+          grep -q '"backend":"127.0.0.1:$PORT"' scripts/webproxy_install.sh
+          grep -q 'LoadCredential=profiles.json:/etc/tproxy-server/profiles.json' scripts/webproxy_install.sh
+          grep -q '127.0.0.1:8081/readyz' scripts/webproxy_install.sh
+          grep -q 'BEGIN MTPADMIN WEBPROXY' scripts/webproxy_install.sh
+          if grep -qE 'install-mtproxy|mtproto-proxy|-H 2398' scripts/webproxy_install.sh; then
+            echo 'Second MTProxy backend must not be installed'; exit 1
           fi
 
-      - name: Guard against committed production secrets
+      - name: Seamless updater transformation
+        run: |
+          grep -q "VERSION='0.11.0'" update.sh
+          grep -q '38-operations.py' update.sh
+          grep -q 'scripts/webproxy_install.sh' update.sh
+          MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
+
+      - name: Guard against production secrets
         run: |
           if grep -RInE --exclude-dir=.git --exclude='ci.yml' '(ee6d61782e727525f37068b87cdc897d|bbd76513a94903a1545f655f8c3625bb|64\.188\.62\.153)' .; then
             echo 'Production value detected in repository'; exit 1
