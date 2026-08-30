@@ -1,4 +1,4 @@
-# Runtime-safe doctor helpers for MTPADMIN 0.6.0.
+# Runtime-safe doctor helpers for MTPADMIN 0.7.0.
 # The web panel runs with NoNewPrivileges=true, so sudo cannot be used there
 # merely to drop privileges. runuser works without granting new privileges.
 as_mtpadmin(){
@@ -12,7 +12,7 @@ as_mtpadmin(){
 }
 
 doctor_cmd(){
-  reload_state; header; echo; local f=0 w=0 dns hb now age rss avail swapused swaptotal ghb gage
+  reload_state; header; echo; local f=0 w=0 dns hb now age rss avail swapused swaptotal ghb gage webp websvc
   [[ -x /usr/local/bin/telemt ]]&&ok 'TeleMT native binary'||{ fail 'TeleMT binary missing';((f++))||true; }
   systemctl is-active --quiet "$SERVICE"&&ok 'TeleMT systemd service'||{ fail 'TeleMT systemd service';((f++))||true; }
   systemctl is-active --quiet "$STATSSVC"&&ok 'Statistics collector'||{ fail 'Statistics collector';((f++))||true; }
@@ -34,6 +34,16 @@ doctor_cmd(){
     [[ "$(dbq "SELECT value FROM scanner_meta WHERE key='autoban';")" != 1 ]]&&ok 'Scanner Guard autoban disabled'||{ warn 'Scanner Guard autoban is enabled';((w++))||true; }
   else
     warn 'Scanner Guard not installed'; ((w++))||true
+  fi
+  if [[ -f /etc/mtpadmin/web-runtime.env ]]; then
+    webp=$(awk -F= '/^WEB_ACTIVE_PORT=/{gsub(/[\x27\x22]/,"",$2);print $2}' /etc/mtpadmin/web-runtime.env | tail -1)
+    websvc=$(awk -F= '/^WEB_ACTIVE_SERVICE=/{gsub(/[\x27\x22]/,"",$2);print $2}' /etc/mtpadmin/web-runtime.env | tail -1)
+    if [[ "$webp" =~ ^(9199|9200)$ && -n "$websvc" ]]; then
+      systemctl is-active --quiet "$websvc"&&ok "Web active slot $webp"||{ fail "Web service $websvc";((f++))||true; }
+      curl -fsS --max-time 4 -H 'X-MTPADMIN-User: doctor-health' "http://127.0.0.1:$webp/healthz" >/dev/null&&ok 'Web backend health'||{ fail 'Web backend health';((f++))||true; }
+    else
+      fail 'Web runtime state'; ((f++))||true
+    fi
   fi
   rss=$(ps -C telemt -o rss=|awk '{s+=$1}END{print s+0}'); ((rss<262144))&&ok "TeleMT RSS $(fmt_bytes $((rss*1024)))"||{ warn "High TeleMT RSS $(fmt_bytes $((rss*1024)))";((w++))||true; }
   avail=$(awk '/MemAvailable:/{print $2}' /proc/meminfo); ((avail>131072))&&ok "RAM available $(fmt_bytes $((avail*1024)))"||{ warn "Low available RAM $(fmt_bytes $((avail*1024)))";((w++))||true; }
