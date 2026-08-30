@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.7.3'
+VERSION='0.8.0'
 BASE_ENGINE_COMMIT='0ab3c3e067831e4343ce63a070e626a8ef1b1bf7'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 TMP=$(mktemp -d)
@@ -22,7 +22,7 @@ s=p.read_text(encoding='utf-8')
 old_version="VERSION='0.7.1'"
 if s.count(old_version) != 1:
     raise SystemExit('unexpected base updater version marker')
-s=s.replace(old_version,"VERSION='0.7.3'",1)
+s=s.replace(old_version,"VERSION='0.8.0'",1)
 
 old_ready='''  systemctl start "$standby_service" || { journalctl -u "$standby_service" -n 80 --no-pager; die 'Standby web backend не стартовал.'; }
   for i in 1 2 3; do
@@ -150,7 +150,7 @@ p.write_text(s,encoding='utf-8')
 PY
 
 bash -n "$TMP/update-engine.sh" || die 'Хотфикс сформировал невалидный update engine.'
-grep -q "VERSION='0.7.3'" "$TMP/update-engine.sh" || die 'Версия update engine не обновилась.'
+grep -q "VERSION='0.8.0'" "$TMP/update-engine.sh" || die 'Версия update engine не обновилась.'
 grep -q 'standby_ready=0' "$TMP/update-engine.sh" || die 'Readiness wait не встроен.'
 grep -q 'recovery-health' "$TMP/update-engine.sh" || die 'Recovery текущего slot не встроен.'
 grep -q "wants='/etc/systemd/system/multi-user.target.wants'" "$TMP/update-engine.sh" || die 'Прямой boot target не встроен.'
@@ -159,7 +159,7 @@ if grep -q 'ln -s "mtpadmin-web-\$standby_slot.service" "\$WEB_ALIAS"' "$TMP/upd
 fi
 
 if [[ "${MTPADMIN_BOOTSTRAP_TEST:-0}" == 1 ]]; then
-  ok 'Update bootstrap 0.7.3 transformation PASS'
+  ok 'Update bootstrap 0.8.0 transformation PASS'
   exit 0
 fi
 
