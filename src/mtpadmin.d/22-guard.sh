@@ -1,10 +1,12 @@
-# Scanner Guard / manual firewall controls (MTPADMIN 0.6.0)
+# Scanner Guard / manual firewall controls (MTPADMIN 0.7.0)
 GUARD=/usr/local/lib/mtpadmin/scanner_guard.py
 SCANNERSVC=mtpadmin-scanner.service
 
 guard_available(){ [[ -x "$GUARD" ]]; }
 guard_status_cmd(){ guard_available || { warn 'Scanner Guard не установлен'; return 1; }; "$GUARD" status; }
 suspicious_cmd(){ guard_available || { warn 'Scanner Guard не установлен'; return 1; }; "$GUARD" suspicious; }
+observed_cmd(){ guard_available || { warn 'Scanner Guard не установлен'; return 1; }; "$GUARD" observed; }
+guard_events_cmd(){ guard_available || { warn 'Scanner Guard не установлен'; return 1; }; "$GUARD" events; }
 bans_cmd(){ guard_available || { warn 'Scanner Guard не установлен'; return 1; }; "$GUARD" bans; }
 ban_cmd(){
   guard_available || { warn 'Scanner Guard не установлен'; return 1; }
@@ -22,7 +24,7 @@ unwhitelist_cmd(){ [[ -n "${1:-}" ]] || { echo 'Usage: mtpadmin unwhitelist IP';
 
 security_cmd(){
   header; echo
-  echo 'Слушающие порты:'; ss -lntp | grep -E ":${PORT}|:9090|:9091|:9199" || true
+  echo 'Слушающие порты:'; ss -lntp | grep -E ":${PORT}|:9090|:9091|:9199|:9200" || true
   echo; echo "Ошибок/отклонено за время процесса: $(metric telemt_connections_bad_total)"
   echo 'Лимиты источников:'
   current_users_json | jq -r '.data[]?|[.username,(if .enabled then "ON" else "OFF" end),(.max_tcp_conns//"unlimited"),(.max_unique_ips//"unlimited"),(.data_quota_bytes//"unlimited")]|@tsv' | awk 'BEGIN{print "SOURCE\tSTATE\tMAX_CONNS\tMAX_IPS\tQUOTA"}{print}' | column -t
@@ -31,5 +33,5 @@ security_cmd(){
   echo; echo -e "${BOLD}Scanner Guard${NC}"
   systemctl is-active --quiet "$SCANNERSVC" 2>/dev/null && ok 'Наблюдатель активен' || warn 'Наблюдатель не запущен'
   guard_available && "$GUARD" status || warn 'Модуль Scanner Guard отсутствует'
-  echo; echo -e "${DIM}Автобан в 0.6.0 отключён. SCAN/HOSTING? — эвристика, а не доказательство принадлежности IP какой-либо организации.${NC}"
+  echo; echo -e "${DIM}Автобан отключён. Risk/SCAN/HOSTING? — эвристика для ручной проверки, а не доказательство принадлежности IP какой-либо организации.${NC}"
 }
