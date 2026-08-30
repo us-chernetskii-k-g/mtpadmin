@@ -31,7 +31,7 @@ s=s.replace(old,new,1)
 needle='bash "$TMP/update-bootstrap.sh"\n'
 if s.count(needle)!=1:
     raise SystemExit('unexpected final bootstrap invocation')
-logger=r'''bash "$TMP/update-bootstrap.sh"
+logger=r"""bash "$TMP/update-bootstrap.sh"
 python3 - "$VERSION" <<'PYEV' || true
 import sqlite3,sys,time
 DB='/var/lib/mtpadmin/stats.db'
@@ -47,7 +47,7 @@ try:
 except Exception:
     pass
 PYEV
-'''
+"""
 s=s.replace(needle,logger,1)
 p.write_text(s,encoding='utf-8')
 PY
