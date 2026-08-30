@@ -59,16 +59,13 @@ for file in webproxy_install.sh update_check.py component_update.sh; do
   curl -fsSL --retry 3 "$ROOT/main/scripts/$file?mtpadmin=$CACHE_BUST" -o "$TMP/$file" || die "Не удалось скачать scripts/$file"
 done
 
-# Keep Telegram upstream permission fixtures faithful even though production
-# provisioning itself intentionally starts under umask 077.
 python3 - "$TMP/webproxy_install.sh" <<'PYFIX'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 old=r'''(cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 "$go_binary" test -p=1 ./...)'''
 new=r'''(cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 sh -c 'umask 022; exec "$@"' sh "$go_binary" test -p=1 ./...)'''
-if old in s and new not in s:
-    s=s.replace(old,new,1)
+if old in s and new not in s: s=s.replace(old,new,1)
 p.write_text(s,encoding='utf-8')
 PYFIX
 
@@ -85,7 +82,6 @@ cat > /etc/systemd/system/mtpadmin-update-check.service <<'EOF'
 Description=MTPADMIN component update availability check
 After=network-online.target
 Wants=network-online.target
-
 [Service]
 Type=oneshot
 User=root
@@ -100,13 +96,11 @@ EOF
 cat > /etc/systemd/system/mtpadmin-update-check.timer <<'EOF'
 [Unit]
 Description=Check MTPADMIN/TeleMT/WEB Proxy updates
-
 [Timer]
 OnBootSec=2min
 OnUnitActiveSec=6h
 RandomizedDelaySec=15min
 Persistent=true
-
 [Install]
 WantedBy=timers.target
 EOF
@@ -114,9 +108,36 @@ chmod 0644 /etc/systemd/system/mtpadmin-update-check.service /etc/systemd/system
 systemctl daemon-reload
 systemctl enable --now mtpadmin-update-check.timer >/dev/null
 
+if ! command -v qrencode >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  info 'Устанавливаю qrencode для локальных QR-кодов...'
+  apt-get update -y >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends qrencode >/dev/null || true
+fi
+
+fix_go_toolchain_access(){
+  local gobin goroot
+  id tproxy >/dev/null 2>&1 || return 0
+  for gobin in /opt/go*/bin/go; do
+    [[ -x "$gobin" ]] || continue
+    runuser -u tproxy -- "$gobin" version >/dev/null 2>&1 && continue
+    goroot=${gobin%/bin/go}
+    chmod a+rx /opt "$goroot" "$goroot/bin" 2>/dev/null || true
+    chmod -R a+rX "$goroot" || die "Не удалось исправить права $goroot"
+    runuser -u tproxy -- "$gobin" version >/dev/null 2>&1 || die "Go toolchain недоступен tproxy: $gobin"
+  done
+}
+fix_go_toolchain_access
+
+# Idempotent: when the same official commit is already installed this only
+# refreshes profiles/Caddy/health and does not rebuild the Go binary.
+if ! bash /usr/local/lib/mtpadmin/webproxy_install.sh; then
+  fix_go_toolchain_access
+  bash /usr/local/lib/mtpadmin/webproxy_install.sh
+fi
+
 /usr/local/lib/mtpadmin/update_check.py >/dev/null 2>&1 || true
 
 echo
 info 'Финальная проверка MTPADMIN + WEB Proxy...'
 /usr/local/bin/mtpadmin doctor
-ok 'MTPADMIN 0.11.6 установлен: WEB link recovery + Compact Links + Async Update Center.'
+ok 'MTPADMIN 0.11.6 установлен: WEB link recovery + Compact Links + serialized Async Update Center.'
