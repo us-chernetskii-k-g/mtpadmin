@@ -48,7 +48,7 @@ mtpadmin
 curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/update.sh | sudo bash
 ```
 
-Перед обновлением автоматически создаётся резервная копия.
+Перед обновлением автоматически создаётся резервная копия. Если первичная установка WEB Proxy оборвалась, повторный запуск продолжит её: уже созданный источник TeleMT будет переиспользован без смены secret.
 
 ---
 
@@ -201,6 +201,6 @@ mtpadmin bans
 
 ## Текущая версия
 
-**0.11.1** — Telegram WEB Proxy, Operations, Update Center, управление WEB Proxy hostname, Scanner Guard Learning Mode и исправления установки официального WEB relay.
+**0.11.2** — Telegram WEB Proxy, Operations, Update Center, управление WEB Proxy hostname, Scanner Guard Learning Mode и надёжное продолжение незавершённой установки WEB relay без повторного создания source.
 
 MTPADMIN развивается как самостоятельная лёгкая панель управления Telegram proxy-сервером. Если нашли проблему или есть идея — Issues и Pull Requests приветствуются.
