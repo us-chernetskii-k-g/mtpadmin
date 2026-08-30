@@ -51,7 +51,7 @@ jobs:
           assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
           assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
           assert 'Swap pressure acceptable' not in s
-          assert Path('VERSION').read_text().strip()=='0.11.1'
+          assert Path('VERSION').read_text().strip()=='0.11.2'
           print('Final runtime PASS')
           PY
 
@@ -60,10 +60,10 @@ jobs:
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.1'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.2'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
           w._o_update_status=lambda:{'checked_at':1,'updates':2,'components':{
-              'mtpadmin':{'current':'0.11.1','latest':'0.12.0','available':True},
+              'mtpadmin':{'current':'0.11.2','latest':'0.12.0','available':True},
               'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},
               'webproxy':{'current':'a'*40,'latest':'b'*40,'available':True}}}
           w._o_component_status=lambda:{}
@@ -84,9 +84,28 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.1')>(0,11,0)
+          assert u.semver('0.11.2')>(0,11,1)
           print('Update checker PASS')
           PY
+
+      - name: WEB Proxy partial source recovery
+        run: |
+          cat >/tmp/mtpadmin-partial.toml <<'EOF'
+          [general]
+          fast_mode = true
+
+          [access.users]
+          "DEIMOS" = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "WEB_PROXY" = "00112233445566778899aabbccddeeff"
+
+          [access.user_enabled]
+          EOF
+          found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
+          test "$found" = '1|00112233445566778899aabbccddeeff'
+          missing=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=NOT_THERE bash scripts/webproxy_install.sh)
+          test "$missing" = '0|'
+          grep -q 'уже существует — переиспользую без ротации secret' scripts/webproxy_install.sh
+          echo 'Partial WEB_PROXY recovery PASS'
 
       - name: Official WEB Proxy installer invariants
         run: |
@@ -129,7 +148,7 @@ jobs:
 
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.1'" update.sh
+          grep -q "VERSION='0.11.2'" update.sh
           grep -q '38-operations.py' update.sh
           grep -q 'update_check.py' update.sh
           grep -q 'component_update.sh' update.sh
@@ -141,7 +160,7 @@ jobs:
           grep -q 'Telegram MTProto Proxy, которым удобно управлять' README.md
           grep -q 'Telegram WEB Proxy' README.md
           grep -q 'Update Center' README.md
-          grep -q '\*\*0.11.1\*\*' README.md
+          grep -q '\*\*0.11.2\*\*' README.md
 
       - name: Guard against production secrets
         run: |
