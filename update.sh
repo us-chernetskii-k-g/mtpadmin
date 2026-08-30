@@ -19,11 +19,14 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 
-# Promote the proven 0.10.0 wrapper to 0.11.0.
 s=s.replace('0.10.0','0.11.0')
-
-old='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/37-analytics-plus.py" -o "$TMP/analytics-plus-extension.py" || die 'Не удалось скачать analytics-plus extension'\n  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" <<'PYWEBEXT'\n'''
-new='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/37-analytics-plus.py" -o "$TMP/analytics-plus-extension.py" || die 'Не удалось скачать analytics-plus extension'\n  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/38-operations.py" -o "$TMP/operations-extension.py" || die 'Не удалось скачать operations extension'\n  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" <<'PYWEBEXT'\n'''
+old='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/37-analytics-plus.py" -o "$TMP/analytics-plus-extension.py" || die 'Не удалось скачать analytics-plus extension'
+  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" <<'PYWEBEXT'
+'''
+new='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/37-analytics-plus.py" -o "$TMP/analytics-plus-extension.py" || die 'Не удалось скачать analytics-plus extension'
+  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/38-operations.py" -o "$TMP/operations-extension.py" || die 'Не удалось скачать operations extension'
+  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" <<'PYWEBEXT'
+'''
 if s.count(old)!=1:
     raise SystemExit('unexpected 0.10 web extension block')
 s=s.replace(old,new,1)
@@ -37,7 +40,6 @@ grep -q '38-operations.py' "$TMP/update-010.sh" || die 'Operations extension н�
 case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
   2)
     MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-010.sh" || die 'Вложенная сборка update-engine не прошла.'
-    bash -n scripts/webproxy_install.sh 2>/dev/null || true
     ok 'Nested 0.11.0 updater transformation PASS'
     exit 0
     ;;
@@ -47,17 +49,13 @@ case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
     ;;
 esac
 
-# First update MTPADMIN itself using the already-proven seamless core path.
 bash "$TMP/update-010.sh"
 
-# Then provision/update the official Telegram WEB transport relay. This does not
-# restart TeleMT; it creates/reuses a dedicated TeleMT source and applies it via API reload.
 curl -fsSL --retry 3 "$ROOT/main/scripts/webproxy_install.sh" -o "$TMP/webproxy_install.sh" || die 'Не удалось скачать WEB Proxy installer.'
 chmod 0700 "$TMP/webproxy_install.sh"
 bash -n "$TMP/webproxy_install.sh" || die 'WEB Proxy installer syntax invalid.'
 install -m 0700 -o root -g root "$TMP/webproxy_install.sh" /usr/local/lib/mtpadmin/webproxy_install.sh
 
-# QR generation is local; absence is non-fatal for transport, but install it when possible.
 if ! command -v qrencode >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
   info 'Устанавливаю qrencode для локальных WEB QR-кодов...'
   apt-get update -y >/dev/null
