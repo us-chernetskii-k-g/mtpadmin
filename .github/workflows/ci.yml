@@ -15,9 +15,23 @@ jobs:
 
       - name: Assemble runtime files
         run: |
-          cat src/mtpadmin.d/*.sh > /tmp/mtpadmin
-          cat src/stats_collector.d/*.py > /tmp/stats_collector.py
-          cat web/mtpadmin_web.d/*.py > /tmp/mtpadmin_web.py
+          cat \
+            src/mtpadmin.d/00-core.sh \
+            src/mtpadmin.d/10-sources.sh \
+            src/mtpadmin.d/20-admin.sh \
+            src/mtpadmin.d/22-guard.sh \
+            src/mtpadmin.d/25-doctor-runtime.sh \
+            src/mtpadmin.d/29-guard-dispatch.sh \
+            src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
+          cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
+          cat \
+            web/mtpadmin_web.d/00-core.py \
+            web/mtpadmin_web.d/05-version.py \
+            web/mtpadmin_web.d/10-ui.py \
+            web/mtpadmin_web.d/15-guard-ui.py \
+            web/mtpadmin_web.d/20-pages.py \
+            web/mtpadmin_web.d/25-guard-route.py \
+            web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
 
       - name: Bash syntax
         run: |
@@ -33,6 +47,35 @@ jobs:
           python3 -m py_compile /tmp/stats_collector.py
           python3 -m py_compile /tmp/mtpadmin_web.py
           python3 -m py_compile src/user_config.py
+          python3 -m py_compile src/scanner_guard.py
+
+      - name: Scanner Guard unit checks
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py')
+          g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+          assert g.duration('permanent')[0] is None
+          exp,label=g.duration('24h'); assert exp is not None and label=='24h'
+          assert g.hosting('Example Cloud Hosting Ltd')
+          assert not g.hosting('T2 Mobile LLC')
+          text=g.rules(8443,'guard_ci')
+          assert 'tcp dport 8443' in text
+          assert 'blocked4_perm' in text and 'seen4' in text
+          assert 'policy accept' in text
+          assert 'autoban' not in text.lower()
+          print('Scanner Guard unit checks PASS')
+          PY
+
+      - name: Scanner Guard safety invariants
+        run: |
+          grep -q 'autoban=OFF' update.sh
+          grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
+          grep -q 'nft delete table inet mtpadmin_guard' update.sh
+          if grep -RInE --include='*.py' --include='*.sh' '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
+            echo 'Unsafe global firewall operation detected'
+            exit 1
+          fi
 
       - name: Guard against committed production secrets
         run: |
