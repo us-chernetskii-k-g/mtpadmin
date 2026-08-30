@@ -2,6 +2,8 @@
 
 ### Свой Telegram proxy — без постоянной возни с консолью
 
+Telegram MTProto Proxy, которым удобно управлять.
+
 MTPADMIN превращает обычный VPS в готовый Telegram proxy-сервер с понятной веб-панелью, статистикой, картой клиентов, Scanner Guard и поддержкой **Telegram WEB Proxy**.
 
 > **Одна установка — MTProxy, WEB Proxy, аналитика и управление из браузера.**
