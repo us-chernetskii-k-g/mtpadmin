@@ -66,25 +66,14 @@ def reenrich_existing(con, salt):
             cc,cn,region,city,asn,org=geo(ip)
             if cc in ('??','') and not asn and not city:
                 continue
-            con.execute(
-                'UPDATE clients SET country_code=?,country_name=?,region=?,city=?,asn=?,org=? WHERE ip=?',
-                (cc,cn,region,city,asn,org,ip)
-            )
+            con.execute('UPDATE clients SET country_code=?,country_name=?,region=?,city=?,asn=?,org=? WHERE ip=?',(cc,cn,region,city,asn,org,ip))
             ih=anon_hash(salt,ip)
-            con.execute(
-                'UPDATE anon_visits SET country_code=?,country_name=?,region=?,city=?,asn=?,org=? WHERE ip_hash=?',
-                (cc,cn,region,city,asn,org,ih)
-            )
+            con.execute('UPDATE anon_visits SET country_code=?,country_name=?,region=?,city=?,asn=?,org=? WHERE ip_hash=?',(cc,cn,region,city,asn,org,ih))
             changed += 1
         except Exception as e:
             print(f'geo re-enrich warning for {ip}: {e}', file=sys.stderr, flush=True)
-    con.execute(
-        "INSERT INTO collector_meta(key,value) VALUES('geo_reenriched_at',?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (str(int(time.time())),)
-    )
-    con.commit()
-    return changed
+    con.execute("INSERT INTO collector_meta(key,value) VALUES('geo_reenriched_at',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(str(int(time.time())),))
+    con.commit(); return changed
 
 
 def fetch_metrics():
@@ -152,10 +141,23 @@ def cleanup(con):
 
 
 def main():
+    import signal
+    reload_requested=False
+    def request_reload(*_):
+        nonlocal reload_requested
+        reload_requested=True
+    signal.signal(signal.SIGHUP,request_reload)
+
     con=connect(); salt=get_salt(); cleanup(con)
     enriched=reenrich_existing(con,salt)
-    prev_active=set(); last_metrics=0.; last_cleanup=0.; last_error=0.
-    print(f'MTPADMIN collector 0.4.3: API + traffic + local city/ASN GeoIP; re-enriched={enriched}',flush=True)
+    hot=os.environ.pop('MTPADMIN_HOT_RELOAD','')=='1'
+    if hot:
+        try: prev_active=active_pairs()
+        except Exception: prev_active=set()
+    else:
+        prev_active=set()
+    last_metrics=0.; last_cleanup=0.; last_error=0.
+    print(f'MTPADMIN collector 0.7.0: API + traffic + local city/ASN GeoIP; re-enriched={enriched}',flush=True)
     while True:
         try:
             active=active_pairs()
@@ -171,6 +173,11 @@ def main():
             if time.time()-last_error>=60:
                 print(f'collector warning: {e}',file=sys.stderr,flush=True); last_error=time.time()
         if time.time()-last_cleanup>=3600: cleanup(con); last_cleanup=time.time()
+        if reload_requested:
+            try: con.commit(); con.close()
+            except Exception: pass
+            os.environ['MTPADMIN_HOT_RELOAD']='1'
+            os.execv(sys.executable,[sys.executable,str(Path(__file__).resolve())])
         time.sleep(POLL_IP)
 
 if __name__=='__main__': raise SystemExit(main() or 0)
