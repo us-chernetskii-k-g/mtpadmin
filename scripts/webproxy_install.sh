@@ -105,11 +105,7 @@ wait_telemt(){
 }
 
 runtime_has_source(){
-  curl -fsS --max-time 4 "$API/v1/users" | python3 - "$WEBPROXY_SOURCE" <<'PY'
-import json,sys
-wanted=sys.argv[1]; d=json.load(sys.stdin)
-raise SystemExit(0 if any(str(x.get('username'))==wanted for x in (d.get('data') or [])) else 1)
-PY
+  curl -fsS --max-time 4 "$API/v1/users" | python3 -c 'import json,sys; wanted=sys.argv[1]; d=json.load(sys.stdin); raise SystemExit(0 if any(str(x.get("username"))==wanted for x in (d.get("data") or [])) else 1)' "$WEBPROXY_SOURCE"
 }
 
 reload_telemt(){
