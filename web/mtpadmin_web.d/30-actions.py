@@ -21,13 +21,16 @@
                 if mc: argv += ['--max-conns',str(mc)]
                 if mi: argv += ['--max-ips',str(mi)]
                 secret=source_mutation(argv,capture_secret=True)
-                self.redirect('/sources',f'Источник {name} создан. Новый secret: {secret}'); return
+                body=f'<div class="card"><h1>Источник {esc(name)} создан</h1><p>Сохраните новый secret. Он показан только в этом ответе и не помещается в URL.</p><div class="linkbox">{esc(secret)}</div><p><a class="btn" href="/sources">Вернуться к источникам</a></p></div>'
+                self.send_html('Источник создан',body,'sources'); return
             if path in ('/action/source-enable','/action/source-disable','/action/source-rotate','/action/source-delete'):
                 name=safe_source_name(f.get('name')); primary=state().get('PROFILE','MAIN')
                 if path.endswith('enable'): source_mutation(['enable',name]); msg=f'{name}: включён'
                 elif path.endswith('disable'): source_mutation(['disable',name]); msg=f'{name}: отключён'
                 elif path.endswith('rotate'):
-                    secret=source_mutation(['rotate',name],capture_secret=True); msg=f'{name}: secret изменён на {secret}'
+                    secret=source_mutation(['rotate',name],capture_secret=True)
+                    body=f'<div class="card"><h1>Secret источника {esc(name)} изменён</h1><p>Сохраните новый secret. Старые ссылки уже недействительны.</p><div class="linkbox">{esc(secret)}</div><p><a class="btn" href="/sources">Вернуться к источникам</a></p></div>'
+                    self.send_html('Secret изменён',body,'sources'); return
                 else:
                     if name==primary: raise ValueError('Основной профиль удалять запрещено')
                     source_mutation(['delete',name]); msg=f'{name}: удалён'
