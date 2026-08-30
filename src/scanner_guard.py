@@ -2,7 +2,7 @@
 import argparse, datetime as dt, ipaddress, json, re, signal, sqlite3, subprocess, sys, time, urllib.request
 from pathlib import Path
 
-VERSION="0.6.0"; STATE=Path('/etc/mtpadmin/state.env'); DB=Path('/var/lib/mtpadmin/stats.db')
+VERSION="0.6.1"; STATE=Path('/etc/mtpadmin/state.env'); DB=Path('/var/lib/mtpadmin/stats.db')
 API='http://127.0.0.1:9091'; TABLE='mtpadmin_guard'; STOP=False
 CITY=Path('/var/lib/mtpadmin/geo/dbip-city-lite.mmdb'); ASN=Path('/var/lib/mtpadmin/geo/dbip-asn-lite.mmdb')
 HOSTING=('host','cloud','server','datacenter','data center','vps','leaseweb','hetzner','ovh','digitalocean','amazon','google','microsoft','oracle','linode','akamai','contabo','netcup','dedik','selectel','timeweb','ultrahost')
@@ -97,12 +97,24 @@ def api(path):
     return d.get('data') if isinstance(d,dict) and d.get('ok') is True else []
 def valid():
     out=set()
+    # Current/recent clients reported by TeleMT API.
     try:
         for u in api('/v1/users') or []:
             for k in ('active_unique_ips_list','recent_unique_ips_list'):
                 for x in u.get(k) or []:
                     try:out.add(str(ipaddress.ip_address(x)))
                     except ValueError:pass
+    except Exception:pass
+    # Also trust the local clients table: it is populated only after TeleMT has
+    # accepted the IP as a client. Restrict it to the configured raw-IP
+    # retention window so a very old address does not stay trusted forever.
+    try:
+        retention=max(1,min(365,int(state().get('RETENTION_DAYS','7'))))
+        cutoff=int(time.time())-retention*86400
+        with con() as c:
+            for r in c.execute("SELECT ip FROM clients WHERE ip IS NOT NULL AND ip!='' AND last_seen>=?",(cutoff,)):
+                try:out.add(str(ipaddress.ip_address(r[0])))
+                except (ValueError,TypeError):pass
     except Exception:pass
     return out
 def geo(ip):
