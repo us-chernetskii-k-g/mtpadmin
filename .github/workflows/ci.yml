@@ -115,10 +115,15 @@ jobs:
 
       - name: Seamless update safety invariants
         run: |
-          grep -q "VERSION='0.7.2'" update.sh
+          grep -q "VERSION='0.7.3'" update.sh
           grep -q "BASE_ENGINE_COMMIT='0ab3c3e067831e4343ce63a070e626a8ef1b1bf7'" update.sh
           grep -q 'standby_ready=0' update.sh
-          grep -q 'не стал готов за 15 секунд' update.sh
+          grep -q 'recovery-health' update.sh
+          grep -q "wants='/etc/systemd/system/multi-user.target.wants'" update.sh
+          if grep -Fq 'ln -s "mtpadmin-web-$standby_slot.service" "$WEB_ALIAS"' update.sh; then
+            echo 'Unsafe live web alias handover detected'
+            exit 1
+          fi
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
           grep -q 'signal.SIGHUP' src/scanner_guard.py
