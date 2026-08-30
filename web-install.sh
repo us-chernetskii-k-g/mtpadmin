@@ -34,15 +34,13 @@ from pathlib import Path
 import sys
 p=Path(sys.argv[1])
 s=p.read_text(encoding='utf-8')
-checks=["VERSION='0.5.0'","PORT=9199","for part in 00-core.py 10-ui.py 20-pages.py 30-actions.py; do","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
+checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s:
         raise SystemExit('unexpected immutable web installer: '+marker)
 s=s.replace("VERSION='0.5.0'", "VERSION='0.6.0'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
-s=s.replace('for part in 00-core.py 10-ui.py 20-pages.py 30-actions.py; do',
-            'for part in 00-core.py 05-version.py 10-ui.py 15-guard-ui.py 20-pages.py 25-guard-route.py 30-actions.py; do',1)
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX',
             'RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
 p.write_text(s,encoding='utf-8')
@@ -54,7 +52,8 @@ bash -n "$TMP/base-web-install.sh"
 # Deliberately run the interactive installer as a file, not as a pipe.
 bash "$TMP/base-web-install.sh"
 
-# Keep the product version consistent with the core release.
+# The immutable installer downloaded the current four web fragments from main,
+# where Scanner Guard is attached in 30-actions.py after the Handler is complete.
 python3 - "$STATE" <<'PY'
 from pathlib import Path
 import sys
@@ -68,8 +67,6 @@ p.write_text('\n'.join(out)+'\n',encoding='utf-8')
 PY
 chmod 0600 "$STATE"
 
-# The immutable installer already writes this setting, but make upgrades from
-# older web units idempotent as well.
 if [[ -f "$WEBSVC" ]]; then
   if grep -q '^RestrictAddressFamilies=' "$WEBSVC"; then
     sed -i 's/^RestrictAddressFamilies=.*/RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK/' "$WEBSVC"
