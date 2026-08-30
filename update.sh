@@ -27,7 +27,7 @@ s=s.replace('Update bootstrap 0.8.0 transformation PASS','Update bootstrap 0.8.1
 marker="p.write_text(s,encoding='utf-8')"
 if s.count(marker)!=1:
     raise SystemExit('unexpected 0.8 bootstrap transform marker')
-extra=r'''
+extra=r"""
 # 0.8.1: the legacy 20-admin fragment ends inside a PYASN heredoc. Close it
 # before runtime extensions, otherwise Guard/doctor text is swallowed by Python.
 old_cli="for part in 00-core.sh 10-sources.sh 20-admin.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do"
@@ -55,7 +55,7 @@ PYWEBEXT
 '''
 if s.count(old_web)!=1: raise SystemExit('unexpected web fragment loop')
 s=s.replace(old_web,new_web,1)
-'''
+"""
 s=s.replace(marker,extra+'\n'+marker,1)
 p.write_text(s,encoding='utf-8')
 PY
