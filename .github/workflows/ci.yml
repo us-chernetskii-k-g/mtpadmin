@@ -112,6 +112,7 @@ jobs:
           cat >/tmp/tproxy-profiles.json <<'EOF'
           {"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:8443","carrier_mode":"https"}]}
           EOF
+          chmod 600 /tmp/tproxy-profiles.json
           /tmp/tproxy-server -config /tmp/tproxy-config.json -profiles-file /tmp/tproxy-profiles.json -check
 
       - name: Seamless updater transformation
