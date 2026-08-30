@@ -96,26 +96,44 @@ jobs:
           print('Scanner Guard unit checks PASS')
           PY
 
-      - name: Web analytics checks
+      - name: Web 0.8 live UI checks
         run: |
           grep -q "def active_clients_html" web/mtpadmin_web.d/30-actions.py
           grep -q "'/active'" web/mtpadmin_web.d/30-actions.py
           grep -q "Все наблюдаемые IP" web/mtpadmin_web.d/30-actions.py
           grep -q "Risk score" web/mtpadmin_web.d/30-actions.py
           grep -q "scanner_state_events" web/mtpadmin_web.d/30-actions.py
+          grep -q "def geo_positions_data" web/mtpadmin_web.d/10-ui.py
+          grep -q "id=\"live-root\"" web/mtpadmin_web.d/10-ui.py
+          grep -q "data-geo-metric='unique'" web/mtpadmin_web.d/10-ui.py
+          grep -q "active-local-filter" web/mtpadmin_web.d/10-ui.py
+          grep -q "fetch(location.pathname+location.search" web/mtpadmin_web.d/10-ui.py
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('webapp','/tmp/mtpadmin_web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          page=w.page_template('T','body','tester','active')
-          assert page.count('href="/active"') == 1
-          assert 'class="active" href="/active">Активные</a>' in page
-          print('Web navigation render PASS')
+          active=w.page_template('T','body','tester','active',refresh=5)
+          assert active.count('href="/active"') == 1
+          assert 'class="active" href="/active">Активные</a>' in active
+          assert 'id="live-root"' in active and 'data-live-ms="5000"' in active
+          assert 'active-local-filter' in active
+          assert 'http-equiv="refresh"' not in active
+          geo=w.page_template('T','<div class="card"><h2>Страны</h2><table><tbody><tr><td>RU</td><td>Россия</td><td>2</td><td>5</td></tr></tbody></table></div>','tester','geo')
+          assert 'Карта мира' in geo and 'geo-points' in geo and 'data-geo-metric' in geo
+          assert 'fetch(location.pathname+location.search' in geo
+          print('Web 0.8 live/map render PASS')
           PY
+
+      - name: Memory pressure checks
+        run: |
+          grep -q 'Memory pressure PSI' src/mtpadmin.d/25-doctor-runtime.sh
+          grep -q 'psi_avg10' src/mtpadmin.d/25-doctor-runtime.sh
+          grep -q 'Swap occupancy' src/mtpadmin.d/25-doctor-runtime.sh
+          grep -q 'vmstat 1 2' src/mtpadmin.d/25-doctor-runtime.sh
 
       - name: Seamless update safety invariants
         run: |
-          grep -q "VERSION='0.7.3'" update.sh
+          grep -q "VERSION='0.8.0'" update.sh
           grep -q "BASE_ENGINE_COMMIT='0ab3c3e067831e4343ce63a070e626a8ef1b1bf7'" update.sh
           grep -q 'standby_ready=0' update.sh
           grep -q 'recovery-health' update.sh
