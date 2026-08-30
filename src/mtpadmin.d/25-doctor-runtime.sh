@@ -1,4 +1,4 @@
-# Runtime-safe doctor helpers for MTPADMIN 0.5.1.
+# Runtime-safe doctor helpers for MTPADMIN 0.6.0.
 # The web panel runs with NoNewPrivileges=true, so sudo cannot be used there
 # merely to drop privileges. runuser works without granting new privileges.
 as_mtpadmin(){
@@ -12,7 +12,7 @@ as_mtpadmin(){
 }
 
 doctor_cmd(){
-  reload_state; header; echo; local f=0 w=0 dns hb now age rss avail swapused swaptotal
+  reload_state; header; echo; local f=0 w=0 dns hb now age rss avail swapused swaptotal ghb gage
   [[ -x /usr/local/bin/telemt ]]&&ok 'TeleMT native binary'||{ fail 'TeleMT binary missing';((f++))||true; }
   systemctl is-active --quiet "$SERVICE"&&ok 'TeleMT systemd service'||{ fail 'TeleMT systemd service';((f++))||true; }
   systemctl is-active --quiet "$STATSSVC"&&ok 'Statistics collector'||{ fail 'Statistics collector';((f++))||true; }
@@ -27,6 +27,14 @@ doctor_cmd(){
   hb=$(dbq "SELECT value FROM collector_meta WHERE key='heartbeat';"); now=$(date +%s); age=$((now-${hb:-0})); ((age<30))&&ok "Collector heartbeat ${age}s"||{ warn "Collector heartbeat stale: ${age}s";((w++))||true; }
   as_mtpadmin test -x /var/lib/mtpadmin/telemt&&ok 'TeleMT working directory permissions'||{ fail 'Working directory permissions';((f++))||true; }
   as_mtpadmin test -r "$CFG"&&ok 'TeleMT config readable'||{ fail 'Config permissions';((f++))||true; }
+  if [[ -x /usr/local/lib/mtpadmin/scanner_guard.py ]]; then
+    systemctl is-active --quiet mtpadmin-scanner.service&&ok 'Scanner Guard service'||{ fail 'Scanner Guard service';((f++))||true; }
+    nft list table inet mtpadmin_guard >/dev/null 2>&1&&ok 'Scanner Guard nftables table'||{ fail 'Scanner Guard nftables table';((f++))||true; }
+    ghb=$(dbq "SELECT value FROM scanner_meta WHERE key='heartbeat';"); gage=$((now-${ghb:-0})); ((gage<40))&&ok "Scanner Guard heartbeat ${gage}s"||{ warn "Scanner Guard heartbeat stale: ${gage}s";((w++))||true; }
+    [[ "$(dbq "SELECT value FROM scanner_meta WHERE key='autoban';")" != 1 ]]&&ok 'Scanner Guard autoban disabled'||{ warn 'Scanner Guard autoban is enabled';((w++))||true; }
+  else
+    warn 'Scanner Guard not installed'; ((w++))||true
+  fi
   rss=$(ps -C telemt -o rss=|awk '{s+=$1}END{print s+0}'); ((rss<262144))&&ok "TeleMT RSS $(fmt_bytes $((rss*1024)))"||{ warn "High TeleMT RSS $(fmt_bytes $((rss*1024)))";((w++))||true; }
   avail=$(awk '/MemAvailable:/{print $2}' /proc/meminfo); ((avail>131072))&&ok "RAM available $(fmt_bytes $((avail*1024)))"||{ warn "Low available RAM $(fmt_bytes $((avail*1024)))";((w++))||true; }
   swaptotal=$(free -b | awk '/Swap:/{print $2}'); swapused=$(free -b | awk '/Swap:/{print $3}'); swaptotal=${swaptotal:-0}; swapused=${swapused:-0}; if (( swaptotal > 0 && swapused * 100 / swaptotal > 90 )); then warn "Swap >90% used ($(fmt_bytes "$swapused"))"; ((w++))||true; else ok "Swap pressure acceptable ($(fmt_bytes "$swapused") used)"; fi
