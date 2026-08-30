@@ -1,4 +1,4 @@
-# Runtime-safe doctor helpers for MTPADMIN 0.7.0.
+# Runtime-safe doctor helpers for MTPADMIN 0.8.0.
 # The web panel runs with NoNewPrivileges=true, so sudo cannot be used there
 # merely to drop privileges. runuser works without granting new privileges.
 as_mtpadmin(){
@@ -11,8 +11,41 @@ as_mtpadmin(){
   fi
 }
 
+psi_avg10(){
+  local kind="${1:-some}"
+  [[ -r /proc/pressure/memory ]] || { echo 0; return; }
+  awk -v k="$kind" '$1==k{for(i=1;i<=NF;i++)if($i~/^avg10=/){split($i,a,"=");print a[2];exit}}' /proc/pressure/memory
+}
+
+resources_cmd(){
+  header; echo
+  echo 'TeleMT:'
+  ps -o pid,user,%cpu,%mem,rss,vsz,etime,cmd -C telemt
+  echo
+  echo 'Память:'
+  free -h
+  echo
+  if [[ -r /proc/pressure/memory ]]; then
+    echo 'Memory pressure PSI:'
+    cat /proc/pressure/memory
+    echo
+  fi
+  echo 'Swap / major faults (накопительные счётчики):'
+  awk '$1=="pswpin"||$1=="pswpout"||$1=="pgmajfault"{printf "  %-12s %s\n",$1,$2}' /proc/vmstat 2>/dev/null || true
+  if command -v vmstat >/dev/null 2>&1; then
+    echo
+    echo 'Текущая активность памяти, выборка 1 сек (si/so = swap in/out):'
+    vmstat 1 2 | tail -2
+  fi
+  echo
+  uptime
+  echo
+  df -h /
+}
+
 doctor_cmd(){
-  reload_state; header; echo; local f=0 w=0 dns hb now age rss avail swapused swaptotal ghb gage webp websvc
+  reload_state; header; echo
+  local f=0 w=0 dns hb now age rss avail swapused swaptotal swappct ghb gage webp websvc psisome psifull
   [[ -x /usr/local/bin/telemt ]]&&ok 'TeleMT native binary'||{ fail 'TeleMT binary missing';((f++))||true; }
   systemctl is-active --quiet "$SERVICE"&&ok 'TeleMT systemd service'||{ fail 'TeleMT systemd service';((f++))||true; }
   systemctl is-active --quiet "$STATSSVC"&&ok 'Statistics collector'||{ fail 'Statistics collector';((f++))||true; }
@@ -47,7 +80,21 @@ doctor_cmd(){
   fi
   rss=$(ps -C telemt -o rss=|awk '{s+=$1}END{print s+0}'); ((rss<262144))&&ok "TeleMT RSS $(fmt_bytes $((rss*1024)))"||{ warn "High TeleMT RSS $(fmt_bytes $((rss*1024)))";((w++))||true; }
   avail=$(awk '/MemAvailable:/{print $2}' /proc/meminfo); ((avail>131072))&&ok "RAM available $(fmt_bytes $((avail*1024)))"||{ warn "Low available RAM $(fmt_bytes $((avail*1024)))";((w++))||true; }
-  swaptotal=$(free -b | awk '/Swap:/{print $2}'); swapused=$(free -b | awk '/Swap:/{print $3}'); swaptotal=${swaptotal:-0}; swapused=${swapused:-0}; if (( swaptotal > 0 && swapused * 100 / swaptotal > 90 )); then warn "Swap >90% used ($(fmt_bytes "$swapused"))"; ((w++))||true; else ok "Swap pressure acceptable ($(fmt_bytes "$swapused") used)"; fi
+
+  psisome=$(psi_avg10 some); psifull=$(psi_avg10 full); psisome=${psisome:-0}; psifull=${psifull:-0}
+  if awk -v s="$psisome" -v f="$psifull" 'BEGIN{exit !(s<10 && f<2)}'; then
+    ok "Memory PSI healthy (some avg10=${psisome}%, full=${psifull}%)"
+  else
+    warn "Memory pressure PSI elevated (some avg10=${psisome}%, full=${psifull}%)"; ((w++))||true
+  fi
+
+  swaptotal=$(free -b | awk '/Swap:/{print $2}'); swapused=$(free -b | awk '/Swap:/{print $3}'); swaptotal=${swaptotal:-0}; swapused=${swapused:-0}; swappct=0
+  if (( swaptotal > 0 )); then swappct=$((swapused*100/swaptotal)); fi
+  if (( swaptotal > 0 && swappct > 90 && avail < 131072 )) || ! awk -v s="$psisome" 'BEGIN{exit !(s<20)}'; then
+    warn "Swap occupancy ${swappct}% ($(fmt_bytes "$swapused") used) with active memory pressure"; ((w++))||true
+  else
+    ok "Swap occupancy ${swappct}% ($(fmt_bytes "$swapused") used); active pressure low"
+  fi
   df -Pk /|awk 'NR==2{exit !($4>524288)}'&&ok 'Disk free >512 MB'||{ warn 'Low disk space';((w++))||true; }
   echo; if ((f==0)); then echo -e "RESULT: ${GREEN}HEALTHY${NC}  warnings=$w"; else echo -e "RESULT: ${RED}FAILED${NC} failures=$f warnings=$w"; return 1; fi
 }
