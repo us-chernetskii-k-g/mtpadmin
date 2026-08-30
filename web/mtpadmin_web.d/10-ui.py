@@ -81,7 +81,6 @@ def page_template(title, body, user, active="dashboard", refresh=None, message="
         ("dashboard", "/", "Обзор"),
         ("stats", "/stats", "Статистика"),
         ("clients", "/clients", "Клиенты"),
-        ("active", "/active", "Активные"),
         ("geo", "/geo", "География"),
         ("sources", "/sources", "Источники"),
         ("links", "/links", "Ссылки"),
