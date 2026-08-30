@@ -25,9 +25,29 @@ command -v python3 >/dev/null 2>&1 || die 'Python3 не найден.'
 
 # shellcheck disable=SC1090
 source "$STATE"
-TTY=/dev/tty; [[ -r "$TTY" ]] || TTY=/dev/stdin
-ask(){ local prompt="$1" def="${2:-}" out; printf '%s [%s]: ' "$prompt" "$def" >"$TTY"; IFS= read -r out <"$TTY" || true; printf '%s' "${out:-$def}"; }
-ask_secret(){ local prompt="$1" out; printf '%s' "$prompt" >"$TTY"; IFS= read -r -s out <"$TTY" || true; printf '\n' >"$TTY"; printf '%s' "$out"; }
+
+# stdin занят curl-пайпом, поэтому интерактивный ввод всегда идёт через
+# один заранее открытый controlling TTY descriptor. Это надёжно работает
+# для: curl ... | sudo bash
+[[ -r /dev/tty && -w /dev/tty ]] || die 'Нет доступного терминала /dev/tty. Запустите установщик из интерактивной SSH-сессии.'
+exec 3<>/dev/tty
+ask(){
+  local prompt="$1" def="${2:-}" out=''
+  if [[ -n "$def" ]]; then
+    printf '%s [%s]: ' "$prompt" "$def" >&3
+  else
+    printf '%s: ' "$prompt" >&3
+  fi
+  IFS= read -r -u 3 out || die 'Не удалось прочитать ответ с терминала.'
+  printf '%s' "${out:-$def}"
+}
+ask_secret(){
+  local prompt="$1" out=''
+  printf '%s' "$prompt" >&3
+  IFS= read -r -s -u 3 out || die 'Не удалось прочитать пароль с терминала.'
+  printf '\n' >&3
+  printf '%s' "$out"
+}
 WEB_HOST="${MTPADMIN_WEB_HOST:-$(ask 'Домен веб-панели' "${PUBLIC_HOST:-}")}"
 WEB_USER="${MTPADMIN_WEB_USER:-$(ask 'Логин администратора' 'admin')}"
 WEB_PASS="${MTPADMIN_WEB_PASSWORD:-}"
