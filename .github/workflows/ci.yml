@@ -17,18 +17,21 @@ jobs:
         run: |
           cat src/mtpadmin.d/*.sh > /tmp/mtpadmin
           cat src/stats_collector.d/*.py > /tmp/stats_collector.py
+          cat web/mtpadmin_web.d/*.py > /tmp/mtpadmin_web.py
 
       - name: Bash syntax
         run: |
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
+          bash -n web-install.sh
           bash -n scripts/render_config.sh
           bash -n scripts/geo_update.sh
 
       - name: Python syntax
         run: |
           python3 -m py_compile /tmp/stats_collector.py
+          python3 -m py_compile /tmp/mtpadmin_web.py
           python3 -m py_compile src/user_config.py
 
       - name: Guard against committed production secrets
