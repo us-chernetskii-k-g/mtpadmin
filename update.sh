@@ -96,9 +96,16 @@ grep -q 'normalize_cli.py' "$TMP/update-bootstrap.sh" || die 'CLI normalizer н�
 grep -q '35-world-map.py' "$TMP/update-bootstrap.sh" || die 'World map extension не встроен.'
 grep -q 'caddy fmt --overwrite' "$TMP/update-bootstrap.sh" || die 'Caddy formatting не встроен.'
 
-if [[ "${MTPADMIN_BOOTSTRAP_TEST:-0}" == 1 ]]; then
-  ok 'Update bootstrap 0.8.2 transformation PASS'
-  exit 0
-fi
+case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
+  2)
+    MTPADMIN_BOOTSTRAP_TEST=1 bash "$TMP/update-bootstrap.sh" || die 'Вложенная сборка update-engine не прошла.'
+    ok 'Nested update-engine transformation PASS'
+    exit 0
+    ;;
+  1)
+    ok 'Update bootstrap 0.8.2 transformation PASS'
+    exit 0
+    ;;
+esac
 
 bash "$TMP/update-bootstrap.sh"
