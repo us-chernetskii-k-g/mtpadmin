@@ -59,6 +59,7 @@ jobs:
 
           spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py')
           g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+          assert g.VERSION == '0.7.0'
           assert g.duration('permanent')[0] is None
           exp,label=g.duration('24h'); assert exp is not None and label=='24h'
           assert g.hosting('Example Cloud Hosting Ltd')
@@ -69,11 +70,17 @@ jobs:
           assert 'policy accept' in text
           assert 'autoban' not in text.lower()
 
-          # A client previously accepted by TeleMT must stay trusted for the
-          # configured raw-IP retention period even after it disconnects.
+          # Risk is advisory only: clients are zero, suspicious hosting grows.
+          now=int(time.time())
+          client={'classification':'CLIENT','valid_ever':1,'total_attempts':50,'first_seen':now-1000,'last_seen':now,'org':'Hosting Ltd'}
+          suspect={'classification':'UNKNOWN','valid_ever':0,'total_attempts':8,'first_seen':now-300,'last_seen':now,'org':'Example Cloud Hosting Ltd'}
+          assert g.risk_score(client,now)==0
+          assert 60 <= g.risk_score(suspect,now) < 100
+
+          # A client previously accepted by TeleMT remains trusted only within
+          # the configured raw-IP retention period.
           with tempfile.TemporaryDirectory() as td:
               g.DB=Path(td)/'stats.db'
-              now=int(time.time())
               with sqlite3.connect(g.DB) as c:
                   c.execute('CREATE TABLE clients(ip TEXT,last_seen INTEGER)')
                   c.execute('INSERT INTO clients VALUES(?,?)',('1.1.1.1',now-60))
@@ -83,17 +90,39 @@ jobs:
               known=g.valid()
               assert '1.1.1.1' in known
               assert '8.8.8.8' not in known
+              g.initdb()
+              with sqlite3.connect(g.DB) as c:
+                  cols={r[1] for r in c.execute('PRAGMA table_info(scanner_observations)')}
+                  assert 'risk_score' in cols
+                  assert c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scanner_state_events'").fetchone()
 
           print('Scanner Guard unit checks PASS')
           PY
 
-      - name: Scanner Guard safety invariants
+      - name: Web analytics checks
+        run: |
+          grep -q "def active_clients_html" web/mtpadmin_web.d/30-actions.py
+          grep -q "'/active'" web/mtpadmin_web.d/30-actions.py
+          grep -q "Все наблюдаемые IP" web/mtpadmin_web.d/30-actions.py
+          grep -q "Risk score" web/mtpadmin_web.d/30-actions.py
+          grep -q "scanner_state_events" web/mtpadmin_web.d/30-actions.py
+
+      - name: Seamless update safety invariants
         run: |
           grep -q 'autoban=OFF' update.sh
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
-          grep -q 'nft delete table inet mtpadmin_guard' update.sh
+          grep -q 'ExecReload=/bin/kill -HUP' update.sh
+          grep -q 'standby_port' update.sh
+          grep -q 'systemctl reload caddy' update.sh
+          grep -q 'Web blue/green' update.sh
+          grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
+          grep -q 'signal.SIGHUP' src/scanner_guard.py
           if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
             echo 'Unsafe global firewall operation detected'
+            exit 1
+          fi
+          if grep -nE 'systemctl[[:space:]]+restart[[:space:]]+"?\$SERVICE"?' update.sh; then
+            echo 'TeleMT restart detected in MTPADMIN update path'
             exit 1
           fi
 
