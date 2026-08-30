@@ -9,6 +9,7 @@ CHECKER='/usr/local/lib/mtpadmin/update_check.py'
 WEBINSTALL='/usr/local/lib/mtpadmin/webproxy_install.sh'
 REPO_API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
 RAW='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
+LOCK='/run/mtpadmin-component-update.lock'
 TMP=''
 
 log_status(){
@@ -34,6 +35,11 @@ trap cleanup EXIT
 # shellcheck disable=SC1090
 source "$STATE"
 
+acquire_lock(){
+  exec 9>"$LOCK"
+  flock -n 9 || die 'Уже выполняется другая операция обновления. Дождитесь её завершения.'
+}
+
 wait_telemt(){
   local i
   for i in {1..30}; do
@@ -44,7 +50,7 @@ wait_telemt(){
 }
 
 update_telemt(){
-  COMPONENT='telemt'; log_status "$COMPONENT" running 'Проверяю последний release TeleMT'
+  COMPONENT='telemt'; acquire_lock; log_status "$COMPONENT" running 'Проверяю последний release TeleMT'
   TMP=$(mktemp -d)
   local arch libc latest cur base archive sumurl expected actual backup bin
   case "$(uname -m)" in x86_64|amd64) arch='x86_64';; aarch64|arm64) arch='aarch64';; *) die "Unsupported arch $(uname -m)";; esac
@@ -67,7 +73,7 @@ update_telemt(){
 }
 
 update_webproxy(){
-  COMPONENT='webproxy'; log_status "$COMPONENT" running 'Проверяю upstream Telegram WEB Proxy'
+  COMPONENT='webproxy'; acquire_lock; log_status "$COMPONENT" running 'Проверяю upstream Telegram WEB Proxy'
   local latest cur
   latest=$(curl -fsSL --retry 3 https://api.github.com/repos/telegramdesktop/tproxy-server/branches/master | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))')
   [[ "$latest" =~ ^[0-9a-f]{40}$ ]] || die 'Не удалось определить upstream commit tproxy-server'
@@ -80,7 +86,7 @@ update_webproxy(){
 }
 
 set_webproxy_host(){
-  COMPONENT='webproxy-host'; local host="${1:-}"
+  COMPONENT='webproxy-host'; acquire_lock; local host="${1:-}"
   [[ "$host" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$host" == *.* ]] || die 'Некорректный WEB Proxy hostname'
   [[ -x "$WEBINSTALL" ]] || die 'WEB Proxy installer не установлен'
   log_status "$COMPONENT" running "Применяю hostname $host"; WEBPROXY_HOST_OVERRIDE="$host" bash "$WEBINSTALL"; "$CHECKER" >/dev/null 2>&1 || true
@@ -88,7 +94,7 @@ set_webproxy_host(){
 }
 
 update_mtpadmin(){
-  COMPONENT='mtpadmin'; log_status "$COMPONENT" running 'Определяю проверенный commit MTPADMIN main'
+  COMPONENT='mtpadmin'; acquire_lock; log_status "$COMPONENT" running 'Определяю проверенный commit MTPADMIN main'
   TMP=$(mktemp -d)
   local sha version
   sha=$(curl -fsSL --retry 3 "$REPO_API/branches/main" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))')
