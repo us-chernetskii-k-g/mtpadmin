@@ -167,7 +167,7 @@ jobs:
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
           grep -q 'signal.SIGHUP' src/scanner_guard.py
           grep -q 'Веб-панель уже установлена' web-install.sh
-          MTPADMIN_BOOTSTRAP_TEST=1 bash update.sh
+          MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
           if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py; then
             echo 'Unsafe global firewall operation detected'; exit 1
           fi
