@@ -10,11 +10,10 @@ from pathlib import Path
 import sys
 
 
-def cut_between(src: str, start_marker: str, end_marker: str, label: str) -> str:
-    starts = [i for i in range(len(src)) if src.startswith(start_marker, i)]
-    if len(starts) != 1:
-        raise SystemExit(f"normalize_cli: expected one legacy {label} start, got {len(starts)}")
-    start = starts[0]
+def cut_first_between(src: str, start_marker: str, end_marker: str, label: str) -> str:
+    start = src.find(start_marker)
+    if start < 0:
+        raise SystemExit(f"normalize_cli: legacy {label} start marker missing")
     end = src.find(end_marker, start + len(start_marker))
     if end < 0:
         raise SystemExit(f"normalize_cli: legacy {label} end marker missing")
@@ -37,17 +36,16 @@ def main() -> int:
         if got != count:
             raise SystemExit(f"normalize_cli: expected {count} occurrences of {marker}, got {got}")
 
-    # The first security/resources implementations are contiguous in 20-admin.sh.
-    src = cut_between(src, "security_cmd(){\n", "logs_cmd(){", "security/resources block")
-    # The first doctor implementation ends immediately before update_cmd().
-    src = cut_between(src, "doctor_cmd(){\n", "update_cmd(){", "doctor block")
+    # Always remove only the first definitions: those are the legacy 20-admin
+    # implementations. Canonical Guard/runtime definitions come later.
+    src = cut_first_between(src, "security_cmd(){\n", "logs_cmd(){", "security/resources block")
+    src = cut_first_between(src, "doctor_cmd(){\n", "update_cmd(){", "doctor block")
 
     for marker in expected:
         got = src.count(marker)
         if got != 1:
             raise SystemExit(f"normalize_cli: expected exactly one final {marker}, got {got}")
 
-    # Guard against accidentally stripping the canonical runtime implementations.
     required = (
         "Scanner Guard / manual firewall controls",
         "Runtime-safe doctor helpers",
