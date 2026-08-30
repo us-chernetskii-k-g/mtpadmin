@@ -59,7 +59,7 @@ jobs:
 
           spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py')
           g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-          assert g.VERSION == '0.7.0'
+          assert g.VERSION == '0.7.1'
           assert g.duration('permanent')[0] is None
           exp,label=g.duration('24h'); assert exp is not None and label=='24h'
           assert g.hosting('Example Cloud Hosting Ltd')
@@ -124,6 +124,14 @@ jobs:
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
           grep -q 'signal.SIGHUP' src/scanner_guard.py
           grep -q 'Веб-панель уже установлена' web-install.sh
+          # Under `set -u`, a variable cannot be referenced in the same `local`
+          # statement that first assigns it. This guards the blue/green slot bug.
+          grep -Fq 'local slot="$1" port="$2" app="$3" file' update.sh
+          grep -Fq 'file="/etc/systemd/system/mtpadmin-web-$slot.service"' update.sh
+          if grep -nE 'local[[:space:]].*slot=.*file=.*\$slot' update.sh; then
+            echo 'Unsafe same-statement local expansion detected'
+            exit 1
+          fi
           if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
             echo 'Unsafe global firewall operation detected'
             exit 1
