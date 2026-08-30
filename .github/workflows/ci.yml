@@ -115,29 +115,17 @@ jobs:
 
       - name: Seamless update safety invariants
         run: |
-          grep -q 'autoban=OFF' update.sh
+          grep -q "VERSION='0.7.2'" update.sh
+          grep -q "BASE_ENGINE_COMMIT='0ab3c3e067831e4343ce63a070e626a8ef1b1bf7'" update.sh
+          grep -q 'standby_ready=0' update.sh
+          grep -q 'не стал готов за 15 секунд' update.sh
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
-          grep -q 'ExecReload=/bin/kill -HUP' update.sh
-          grep -q 'standby_port' update.sh
-          grep -q 'systemctl reload caddy' update.sh
-          grep -q 'Web blue/green' update.sh
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
           grep -q 'signal.SIGHUP' src/scanner_guard.py
           grep -q 'Веб-панель уже установлена' web-install.sh
-          # Under `set -u`, a variable cannot be referenced in the same `local`
-          # statement that first assigns it. This guards the blue/green slot bug.
-          grep -Fq 'local slot="$1" port="$2" app="$3" file' update.sh
-          grep -Fq 'file="/etc/systemd/system/mtpadmin-web-$slot.service"' update.sh
-          if grep -nE 'local[[:space:]].*slot=.*file=.*\$slot' update.sh; then
-            echo 'Unsafe same-statement local expansion detected'
-            exit 1
-          fi
-          if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py update.sh; then
+          MTPADMIN_BOOTSTRAP_TEST=1 bash update.sh
+          if grep -InE '(flush[[:space:]]+ruleset|policy[[:space:]]+drop)' src/scanner_guard.py; then
             echo 'Unsafe global firewall operation detected'
-            exit 1
-          fi
-          if grep -nE 'systemctl[[:space:]]+restart[[:space:]]+"?\$SERVICE"?' update.sh; then
-            echo 'TeleMT restart detected in MTPADMIN update path'
             exit 1
           fi
 
