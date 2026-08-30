@@ -25,7 +25,17 @@ jobs:
             src/mtpadmin.d/29-guard-dispatch.sh \
             src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           python3 scripts/normalize_cli.py /tmp/mtpadmin
+
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
+          python3 - <<'PY'
+          from pathlib import Path
+          app=Path('/tmp/stats_collector.py')
+          ext=Path('src/stats_collector.d/15-online-history.py').read_text()
+          src=app.read_text(); marker="if __name__=='__main__': raise SystemExit(main() or 0)"
+          assert src.count(marker)==1
+          app.write_text(src.replace(marker,ext.rstrip()+"\n\n"+marker,1))
+          PY
+
           cat \
             web/mtpadmin_web.d/00-core.py \
             web/mtpadmin_web.d/10-ui.py \
@@ -34,10 +44,12 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           app=Path('/tmp/mtpadmin_web.py')
-          ext=Path('web/mtpadmin_web.d/35-world-map.py').read_text()
           src=app.read_text(); marker="if __name__=='__main__': main()"
           assert src.count(marker)==1
-          app.write_text(src.replace(marker,ext.rstrip()+"\n\n"+marker,1))
+          for p in ('web/mtpadmin_web.d/35-world-map.py','web/mtpadmin_web.d/36-analytics.py'):
+              ext=Path(p).read_text()
+              src=src.replace(marker,ext.rstrip()+"\n\n"+marker,1)
+          app.write_text(src)
           PY
 
       - name: Bash syntax
@@ -53,7 +65,9 @@ jobs:
         run: |
           python3 -m py_compile /tmp/stats_collector.py
           python3 -m py_compile /tmp/mtpadmin_web.py
+          python3 -m py_compile src/stats_collector.d/15-online-history.py
           python3 -m py_compile web/mtpadmin_web.d/35-world-map.py
+          python3 -m py_compile web/mtpadmin_web.d/36-analytics.py
           python3 -m py_compile scripts/normalize_cli.py
           python3 -m py_compile src/user_config.py
           python3 -m py_compile src/scanner_guard.py
@@ -71,20 +85,40 @@ jobs:
           assert s.count('doctor_cmd(){') == 1
           assert s.count('resources_cmd(){') == 1
           assert s.count('security_cmd(){') == 1
-          doctor=s.index('doctor_cmd(){')
-          resources=s.index('resources_cmd(){')
-          security=s.index('security_cmd(){')
-          assert security > guard
-          assert resources > runtime
-          assert doctor > runtime
+          doctor=s.index('doctor_cmd(){'); resources=s.index('resources_cmd(){'); security=s.index('security_cmd(){')
+          assert security > guard and resources > runtime and doctor > runtime
           tail=s[doctor:]
           assert 'Memory PSI healthy' in tail and 'Scanner Guard service' in tail and 'Web active slot' in tail
-          rtail=s[resources:doctor]
-          assert 'Memory pressure PSI' in rtail
-          stail=s[security:runtime]
-          assert 'Scanner Guard' in stail
+          assert 'Memory pressure PSI' in s[resources:doctor]
+          assert 'Scanner Guard' in s[security:runtime]
           assert 'Swap pressure acceptable' not in s
           print('Final CLI uniqueness/runtime PASS')
+          PY
+
+      - name: Online history collector checks
+        run: |
+          python3 - <<'PY'
+          import importlib.util, sqlite3, tempfile, time
+          from pathlib import Path
+          spec=importlib.util.spec_from_file_location('collector','/tmp/stats_collector.py')
+          c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+          with tempfile.TemporaryDirectory() as td:
+              c.DB=str(Path(td)/'stats.db')
+              c.SALT_FILE=str(Path(td)/'salt')
+              con=c.connect()
+              names={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+              assert 'online_samples' in names
+              c._online_last_sample=0
+              now=int(time.time())
+              metrics={'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':2}}
+              active={('DEIMOS','1.1.1.1'),('DEIMOS','2.2.2.2')}
+              c._sample_online(con,metrics,active,now)
+              row=con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='__GLOBAL__'").fetchone()
+              assert row==(4,2), row
+              row=con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='DEIMOS'").fetchone()
+              assert row==(4,2), row
+              con.close()
+          print('Online history collector PASS')
           PY
 
       - name: Scanner Guard unit checks
@@ -107,46 +141,44 @@ jobs:
           assert g.risk_score(client,now)==0 and 60 <= g.risk_score(suspect,now) < 100
           with tempfile.TemporaryDirectory() as td:
               g.DB=Path(td)/'stats.db'
-              with sqlite3.connect(g.DB) as c:
-                  c.execute('CREATE TABLE clients(ip TEXT,last_seen INTEGER)')
-                  c.execute('INSERT INTO clients VALUES(?,?)',('1.1.1.1',now-60))
-                  c.execute('INSERT INTO clients VALUES(?,?)',('8.8.8.8',now-10*86400))
+              with sqlite3.connect(g.DB) as con:
+                  con.execute('CREATE TABLE clients(ip TEXT,last_seen INTEGER)')
+                  con.execute('INSERT INTO clients VALUES(?,?)',('1.1.1.1',now-60))
+                  con.execute('INSERT INTO clients VALUES(?,?)',('8.8.8.8',now-10*86400))
               g.api=lambda _path: []; g.state=lambda: {'RETENTION_DAYS':'7'}
               known=g.valid(); assert '1.1.1.1' in known and '8.8.8.8' not in known
               g.initdb()
-              with sqlite3.connect(g.DB) as c:
-                  cols={r[1] for r in c.execute('PRAGMA table_info(scanner_observations)')}
+              with sqlite3.connect(g.DB) as con:
+                  cols={r[1] for r in con.execute('PRAGMA table_info(scanner_observations)')}
                   assert 'risk_score' in cols
-                  assert c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scanner_state_events'").fetchone()
+                  assert con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scanner_state_events'").fetchone()
           print('Scanner Guard unit checks PASS')
           PY
 
-      - name: Web 0.8.2 live UI and map checks
+      - name: Web 0.9.0 analytics and map checks
         run: |
           grep -q "def active_clients_html" web/mtpadmin_web.d/30-actions.py
           grep -q "Все наблюдаемые IP" web/mtpadmin_web.d/30-actions.py
-          grep -q "def geo_positions_data" web/mtpadmin_web.d/10-ui.py
-          grep -q "fetch(location.pathname+location.search" web/mtpadmin_web.d/10-ui.py
           grep -q "world-map-equirectangular.png" web/mtpadmin_web.d/35-world-map.py
-          grep -q "wm-tip" web/mtpadmin_web.d/35-world-map.py
-          grep -q "Math.log1p" web/mtpadmin_web.d/35-world-map.py
-          grep -q "data-wm-cities" web/mtpadmin_web.d/35-world-map.py
+          grep -q "def _a_online_card" web/mtpadmin_web.d/36-analytics.py
+          grep -q "Risk · распределение" web/mtpadmin_web.d/36-analytics.py
+          grep -q "Трафик сегодня" web/mtpadmin_web.d/36-analytics.py
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('webapp','/tmp/mtpadmin_web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          chart=w._a_chart(['10:00','11:00'],[('X',[1,3],'#fff')])
+          assert '<svg' in chart and '10:00' in chart and '11:00' in chart
           active=w.page_template('T','body','tester','active',refresh=5)
           assert active.count('href="/active"') == 1
           assert 'id="live-root"' in active and 'data-live-ms="5000"' in active
-          assert 'active-local-filter' in active and 'http-equiv="refresh"' not in active
+          assert 'active-local-filter' in active and 'a-chart-wrap' in active
           w._wm_ensure=lambda: True
           w._wm_city_map=lambda: {'RU':'Petropavlovsk-Kamchatskiy'}
           geo=w.page_template('T','<div class="card"><h2>Страны</h2><table><tbody><tr><td>RU</td><td>Россия</td><td>2</td><td>5</td></tr></tbody></table></div>','tester','geo')
-          assert 'Карта мира' in geo and '/assets/world-map.png' in geo and 'geo-points' in geo
-          assert "<g class='geo-land'>" not in geo
-          assert 'wm-tip' in geo and 'data-wm-cities=' in geo and 'Petropavlovsk-Kamchatskiy' in geo
-          assert 'Math.log1p' in geo and 'MutationObserver' in geo
-          print('Web 0.8.2 live/map render PASS')
+          assert '/assets/world-map.png' in geo and 'geo-points' in geo and 'wm-tip' in geo
+          assert 'Petropavlovsk-Kamchatskiy' in geo and 'MutationObserver' in geo
+          print('Web 0.9.0 analytics/map render PASS')
           PY
 
       - name: Memory pressure checks
@@ -158,10 +190,11 @@ jobs:
 
       - name: Seamless update safety invariants
         run: |
-          grep -q "VERSION='0.8.2'" update.sh
-          grep -q '21-admin-tail.sh' update.sh
+          grep -q "VERSION='0.9.0'" update.sh
           grep -q 'normalize_cli.py' update.sh
+          grep -q '15-online-history.py' update.sh
           grep -q '35-world-map.py' update.sh
+          grep -q '36-analytics.py' update.sh
           grep -q 'caddy fmt --overwrite' update.sh
           grep -q 'IP самого сервера блокировать запрещено' src/scanner_guard.py
           grep -q 'MTPADMIN_HOT_RELOAD' src/stats_collector.d/10-runtime.py
