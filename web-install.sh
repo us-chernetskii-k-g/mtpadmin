@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.3'
+VERSION='0.11.4'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
@@ -35,8 +35,6 @@ if grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
   exit 0
 fi
 
-# Core and WEB Proxy may be updated before the first panel is created; Caddy is
-# already present at this point, so WEB Proxy can safely provision its own host.
 info 'Обновляю ядро и подготавливаю Telegram WEB Proxy...'
 get_update "$TMP/update.sh"
 bash "$TMP/update.sh"
@@ -49,7 +47,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.11.3'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.11.4'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -63,4 +61,4 @@ info 'Перевожу веб-панель на бесшовную blue/green с
 get_update "$TMP/update-after-web.sh"
 bash "$TMP/update-after-web.sh"
 
-ok "MTPADMIN Web $VERSION готов. Blue/green, Update Center и Telegram WEB Proxy включены; autoban=OFF."
+ok "MTPADMIN Web $VERSION готов. Blue/green, Compact UI, Update Center и Telegram WEB Proxy включены; autoban=OFF."
