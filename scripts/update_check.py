@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-import json, os, re, subprocess, tempfile, time, urllib.request
+import base64, json, os, re, subprocess, tempfile, time, urllib.request
 from pathlib import Path
 
 OUT=Path('/var/lib/mtpadmin/update-status.json')
 STATE=Path('/etc/mtpadmin/state.env')
-UA='MTPADMIN-update-check/0.11.1'
+UA='MTPADMIN-update-check/0.11.3'
 
 
 def state():
@@ -20,12 +20,25 @@ def state():
 
 
 def get_text(url, timeout=10):
-    req=urllib.request.Request(url,headers={'User-Agent':UA,'Accept':'application/vnd.github+json'})
+    req=urllib.request.Request(url,headers={
+        'User-Agent':UA,
+        'Accept':'application/vnd.github+json',
+        'Cache-Control':'no-cache',
+        'Pragma':'no-cache',
+    })
     with urllib.request.urlopen(req,timeout=timeout) as r:
         return r.read().decode('utf-8','replace')
 
 
 def get_json(url): return json.loads(get_text(url))
+
+def github_file_text(repo, path, ref='main'):
+    data=get_json(f'https://api.github.com/repos/{repo}/contents/{path}?ref={ref}')
+    if not isinstance(data,dict): raise RuntimeError('GitHub contents API returned non-object')
+    if data.get('encoding')!='base64' or not data.get('content'):
+        raise RuntimeError('GitHub contents API returned unsupported encoding')
+    return base64.b64decode(str(data['content']).encode('ascii')).decode('utf-8','replace')
+
 
 def semver(v):
     m=re.search(r'(\d+)\.(\d+)\.(\d+)',str(v or ''))
@@ -42,8 +55,9 @@ def cmdver(argv):
 
 def main():
     st=state(); errors=[]; comps={}
-    cur_m=st.get('MTPADMIN_VERSION') or cmdver(['/usr/local/bin/mtpadmin','version'])
-    try: lat_m=get_text('https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/VERSION').strip()
+    # Runtime binary is authoritative; state.env is only a fallback after a partial install.
+    cur_m=cmdver(['/usr/local/bin/mtpadmin','version']) or st.get('MTPADMIN_VERSION') or ''
+    try: lat_m=github_file_text('us-chernetskii-k-g/mtpadmin','VERSION','main').strip()
     except Exception as e: lat_m=''; errors.append('MTPADMIN: '+str(e))
     comps['mtpadmin']={'label':'MTPADMIN','current':cur_m,'latest':lat_m,'available':bool(lat_m and semver(lat_m)>semver(cur_m))}
 
