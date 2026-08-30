@@ -1,1 +1,0 @@
-Temporary marker for 0.7.2 standby readiness hotfix.
