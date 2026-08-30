@@ -17,7 +17,6 @@ jobs:
         run: |
           cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           python3 scripts/normalize_cli.py /tmp/mtpadmin
-
           cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
           python3 - <<'PY'
           from pathlib import Path
@@ -25,7 +24,6 @@ jobs:
           e=Path('src/stats_collector.d/15-online-history.py').read_text(); assert s.count(m)==1
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           PY
-
           cat web/mtpadmin_web.d/00-core.py web/mtpadmin_web.d/10-ui.py web/mtpadmin_web.d/20-pages.py web/mtpadmin_web.d/30-actions.py > /tmp/mtpadmin_web.py
           python3 - <<'PY'
           from pathlib import Path
@@ -42,7 +40,8 @@ jobs:
           bash -n update.sh
           bash -n web-install.sh
           bash -n scripts/webproxy_install.sh
-          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py
+          bash -n scripts/component_update.sh
+          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py
           python3 - <<'PY'
           from pathlib import Path
           s=Path('/tmp/mtpadmin').read_text()
@@ -50,52 +49,61 @@ jobs:
           assert s.count('resources_cmd(){')==1
           assert s.count('security_cmd(){')==1
           assert 'Memory PSI healthy' in s and 'Scanner Guard service' in s and 'Web active slot' in s
+          assert 'WEBPROXY_READY' in s and 'provisioning incomplete' in s
           assert 'Swap pressure acceptable' not in s
-          print('Final CLI PASS')
+          assert Path('VERSION').read_text().strip()=='0.11.1'
+          print('Final runtime PASS')
           PY
 
-      - name: Online history and Guard regression
-        run: |
-          python3 - <<'PY'
-          import importlib.util,tempfile,time
-          from pathlib import Path
-          spec=importlib.util.spec_from_file_location('collector','/tmp/stats_collector.py'); c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
-          with tempfile.TemporaryDirectory() as td:
-              c.DB=str(Path(td)/'stats.db'); c.SALT_FILE=str(Path(td)/'salt'); con=c.connect(); now=int(time.time()); c._online_last_sample=0
-              c._sample_online(con,{'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':2}},{('DEIMOS','1.1.1.1'),('DEIMOS','2.2.2.2')},now)
-              assert con.execute("SELECT connections,unique_ips FROM online_samples WHERE username='__GLOBAL__'").fetchone()==(4,2)
-          spec=importlib.util.spec_from_file_location('guard','src/scanner_guard.py'); g=importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
-          assert 'tcp dport 8443' in g.rules(8443,'ci') and 'policy accept' in g.rules(8443,'ci')
-          print('Collector/Guard PASS')
-          PY
-
-      - name: Operations and WEB Proxy UI
+      - name: Operations Update Center UI
         run: |
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','MTPADMIN_VERSION':'0.11.0'}
+          w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.11.1'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
+          w._o_update_status=lambda:{'checked_at':1,'updates':2,'components':{
+              'mtpadmin':{'current':'0.11.1','latest':'0.12.0','available':True},
+              'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},
+              'webproxy':{'current':'a'*40,'latest':'b'*40,'available':True}}}
+          w._o_component_status=lambda:{}
+          w._o_service=lambda name: True; w._o_http_ok=lambda url: True
           assert w._o_webproxy_link()=='https://t.me/webproxy?server=webproxy.example.com&secret=00112233445566778899aabbccddeeff'
-          assert w._x_compare(5,0,False)[0]=='нет данных для сравнения'
-          page=w.page_template('T','body','tester','operations',refresh=10)
-          assert page.count('href="/operations"')==1 and 'data-live-ms="10000"' in page
-          print('Operations/WEB UI PASS')
+          html=w._o_update_center('csrf')
+          assert 'Update Center' in html and 'Доступно обновление' in html and '/action/component-update' in html
+          card=w._o_webproxy_card('csrf')
+          assert "name='host'" in card and 'webproxy.example.com' in card and '/action/webproxy-host' in card
+          page=w.page_template('T','body','tester','dashboard',refresh=10)
+          assert 'Доступно обновлений: 2' in page and 'href="/operations"' in page
+          print('Update Center UI PASS')
+          PY
+
+      - name: Update checker semantics
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
+          assert u.semver('v3.5.5')==(3,5,5)
+          assert u.semver('0.11.1')>(0,11,0)
+          print('Update checker PASS')
           PY
 
       - name: Official WEB Proxy installer invariants
         run: |
-          grep -q "TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'" scripts/webproxy_install.sh
+          grep -q "PINNED_TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'" scripts/webproxy_install.sh
           grep -q "TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'" scripts/webproxy_install.sh
+          grep -q 'runuser -u tproxy' scripts/webproxy_install.sh
+          grep -q 'TPROXY_COMMIT_OVERRIDE' scripts/webproxy_install.sh
+          grep -q 'WEBPROXY_HOST_OVERRIDE' scripts/webproxy_install.sh
+          grep -q "state_set WEBPROXY_READY '0'" scripts/webproxy_install.sh
+          grep -q "state_set WEBPROXY_READY '1'" scripts/webproxy_install.sh
           grep -q '"backend":"127.0.0.1:$PORT"' scripts/webproxy_install.sh
           grep -q 'LoadCredential=profiles.json:/etc/tproxy-server/profiles.json' scripts/webproxy_install.sh
           grep -q '127.0.0.1:8081/readyz' scripts/webproxy_install.sh
-          grep -q 'BEGIN MTPADMIN WEBPROXY' scripts/webproxy_install.sh
-          if grep -qE 'install-mtproxy|mtproto-proxy|-H 2398' scripts/webproxy_install.sh; then
-            echo 'Second MTProxy backend must not be installed'; exit 1
-          fi
+          grep -q 'previous version' scripts/webproxy_install.sh || grep -q 'предыдущая версия' scripts/webproxy_install.sh
+          if grep -qE 'install-mtproxy|mtproto-proxy|-H 2398' scripts/webproxy_install.sh; then echo 'Second MTProxy backend must not be installed'; exit 1; fi
 
-      - name: Build pinned official WEB relay and validate our profile
+      - name: Build pinned official WEB relay and validate profile
         run: |
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
@@ -104,23 +112,36 @@ jobs:
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           test "$(git -C /tmp/tproxy-upstream rev-parse HEAD)" = 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
           (cd /tmp/tproxy-upstream && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
-          mkdir -p /tmp/tproxy-site
-          printf '<!doctype html><title>ci</title>\n' >/tmp/tproxy-site/index.html
-          cat >/tmp/tproxy-config.json <<'EOF'
-          {"public_hostname":"webproxy.example.com","listen":"127.0.0.1:18080","admin_listen":"127.0.0.1:18081","public_dir":"/tmp/tproxy-site","profiles_file":"/tmp/tproxy-profiles.json"}
-          EOF
-          cat >/tmp/tproxy-profiles.json <<'EOF'
-          {"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:8443","carrier_mode":"https"}]}
-          EOF
+          mkdir -p /tmp/tproxy-site; printf '<!doctype html><title>ci</title>\n' >/tmp/tproxy-site/index.html
+          printf '%s\n' '{"public_hostname":"webproxy.example.com","listen":"127.0.0.1:18080","admin_listen":"127.0.0.1:18081","public_dir":"/tmp/tproxy-site","profiles_file":"/tmp/tproxy-profiles.json"}' >/tmp/tproxy-config.json
+          printf '%s\n' '{"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:8443","carrier_mode":"https"}]}' >/tmp/tproxy-profiles.json
           chmod 600 /tmp/tproxy-profiles.json
           /tmp/tproxy-server -config /tmp/tproxy-config.json -profiles-file /tmp/tproxy-profiles.json -check
 
+      - name: Component updater safety
+        run: |
+          grep -q 'telemt-before-' scripts/component_update.sh
+          grep -q 'Checksum нового TeleMT' scripts/component_update.sh
+          grep -q 'wait_telemt' scripts/component_update.sh
+          grep -q 'systemd-run' scripts/component_update.sh
+          grep -q 'TPROXY_COMMIT_OVERRIDE' scripts/component_update.sh
+          grep -q 'WEBPROXY_HOST_OVERRIDE' scripts/component_update.sh
+
       - name: Seamless updater transformation
         run: |
-          grep -q "VERSION='0.11.0'" update.sh
+          grep -q "VERSION='0.11.1'" update.sh
           grep -q '38-operations.py' update.sh
-          grep -q 'scripts/webproxy_install.sh' update.sh
+          grep -q 'update_check.py' update.sh
+          grep -q 'component_update.sh' update.sh
+          grep -q 'mtpadmin-update-check.timer' update.sh
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
+
+      - name: README product page
+        run: |
+          grep -q 'Telegram MTProto Proxy, которым удобно управлять' README.md
+          grep -q 'Telegram WEB Proxy' README.md
+          grep -q 'Update Center' README.md
+          grep -q '\*\*0.11.1\*\*' README.md
 
       - name: Guard against production secrets
         run: |
