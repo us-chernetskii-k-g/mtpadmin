@@ -57,7 +57,7 @@ jobs:
       - name: Online history and Guard regression
         run: |
           python3 - <<'PY'
-          import importlib.util,sqlite3,tempfile,time
+          import importlib.util,tempfile,time
           from pathlib import Path
           spec=importlib.util.spec_from_file_location('collector','/tmp/stats_collector.py'); c=importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
           with tempfile.TemporaryDirectory() as td:
@@ -76,12 +76,10 @@ jobs:
           spec=importlib.util.spec_from_file_location('web','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           w._o_state=lambda:{'WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_SOURCE':'WEB_PROXY','MTPADMIN_VERSION':'0.11.0'}
           w._o_webproxy_secret=lambda:'00112233445566778899aabbccddeeff'
-          link=w._o_webproxy_link()
-          assert link=='https://t.me/webproxy?server=webproxy.example.com&secret=00112233445566778899aabbccddeeff'
+          assert w._o_webproxy_link()=='https://t.me/webproxy?server=webproxy.example.com&secret=00112233445566778899aabbccddeeff'
           assert w._x_compare(5,0,False)[0]=='нет данных для сравнения'
           page=w.page_template('T','body','tester','operations',refresh=10)
-          assert 'href="/operations"' in page and page.count('href="/operations"')==1
-          assert 'data-live-ms="10000"' in page
+          assert page.count('href="/operations"')==1 and 'data-live-ms="10000"' in page
           print('Operations/WEB UI PASS')
           PY
 
@@ -96,6 +94,25 @@ jobs:
           if grep -qE 'install-mtproxy|mtproto-proxy|-H 2398' scripts/webproxy_install.sh; then
             echo 'Second MTProxy backend must not be installed'; exit 1
           fi
+
+      - name: Build pinned official WEB relay and validate our profile
+        run: |
+          rm -rf /tmp/tproxy-upstream
+          git init -q /tmp/tproxy-upstream
+          git -C /tmp/tproxy-upstream remote add origin https://github.com/telegramdesktop/tproxy-server.git
+          git -C /tmp/tproxy-upstream fetch -q --depth=1 origin 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
+          git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
+          test "$(git -C /tmp/tproxy-upstream rev-parse HEAD)" = 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
+          (cd /tmp/tproxy-upstream && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
+          mkdir -p /tmp/tproxy-site
+          printf '<!doctype html><title>ci</title>\n' >/tmp/tproxy-site/index.html
+          cat >/tmp/tproxy-config.json <<'EOF'
+          {"public_hostname":"webproxy.example.com","listen":"127.0.0.1:18080","admin_listen":"127.0.0.1:18081","public_dir":"/tmp/tproxy-site","profiles_file":"/tmp/tproxy-profiles.json"}
+          EOF
+          cat >/tmp/tproxy-profiles.json <<'EOF'
+          {"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:8443","carrier_mode":"https"}]}
+          EOF
+          /tmp/tproxy-server -config /tmp/tproxy-config.json -profiles-file /tmp/tproxy-profiles.json -check
 
       - name: Seamless updater transformation
         run: |
