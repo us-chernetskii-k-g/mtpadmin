@@ -16,6 +16,7 @@
 - **Понятная веб-панель** — основные действия без постоянного SSH.
 - **Готовые ссылки и QR** — Classic, Secure, FakeTLS и Telegram WEB Proxy.
 - **Статистика без сторонних сервисов** — подключения, трафик, география, источники.
+- **Единый live-список клиентов** — обычные MTProto и WEB Proxy отображаются вместе с IP, GeoIP и ASN.
 - **Самодиагностика** — MTPADMIN сам показывает, что работает, а что требует внимания.
 - **Безопасные обновления** — backup, rollback и blue/green для веб-панели.
 - **Telegram WEB Proxy** — отдельный HTTPS/443 transport с официальным MTProxy backend.
@@ -35,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/in
 mtpadmin
 ```
 
-Обновление:
+Для установленной системы предпочтительный способ обновления — **MTPADMIN → Операции → Update Center**. Консольный updater остаётся запасным вариантом:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/update.sh | sudo bash
@@ -46,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/up
 ## Что вы получаете после установки
 
 **Обзор** — состояние сервера и главные показатели без перегруженной технической информации.
+
+**Активные** — единый live-список обычных MTProto и WEB Proxy клиентов. WEB-клиенты получают ту же локальную GeoIP/ASN обработку и ту же политику хранения IP, что и остальные клиенты.
 
 **Ссылки** — готовые подключения и QR-коды; secrets скрыты по умолчанию.
 
@@ -83,7 +86,9 @@ Telegram
 
 WEB transport изолирован от обычного TeleMT proxy. Локальные backend-порты закрываются от внешнего доступа.
 
-Повторная проверка WEB Proxy из Update Center не просто смотрит номер версии: она восстанавливает конфигурацию, безопасные pending limits, локальный backend и READY-состояние.
+Начиная с **0.11.11**, MTPADMIN добавляет к relay небольшой локальный telemetry endpoint. Он доступен только через loopback admin listener и отдаёт панели/collector только активный IP и число carrier-сессий. Capability, proxy secret, session token и URL запросов туда не попадают. Благодаря этому WEB-клиенты отображаются в «Активных», получают локальный GeoIP/ASN и участвуют в общей live-статистике.
+
+Повторная проверка WEB Proxy из Update Center не просто смотрит номер версии: она восстанавливает конфигурацию, безопасные pending limits, локальный backend, telemetry patch и READY-состояние.
 
 ## MTPADMIN и VPN BOSS
 
@@ -129,7 +134,7 @@ TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR
 ## Для тех, кому нужны технические детали
 
 - основной proxy: **TeleMT**;
-- WEB relay: **telegramdesktop/tproxy-server**;
+- WEB relay: **telegramdesktop/tproxy-server** + небольшой MTPADMIN loopback telemetry patch;
 - WEB backend: официальный **TelegramMessenger/MTProxy**;
 - HTTPS: **Caddy**;
 - статистика: локальная SQLite DB;
@@ -148,6 +153,6 @@ mtpadmin doctor
 
 ## Текущая версия
 
-**0.11.8** — аудит production-цепочки: надёжное применение источников, постоянная статистика после restart, исправления WEB Proxy/official MTProxy, устранение FD leak веб-панели и восстановление Update Center.
+**0.11.11** — WEB Proxy теперь участвует в общей live-статистике на уровне клиентов: активные WEB IP, GeoIP/ASN, история по общей retention-политике и автоматическое восстановление telemetry при установке, обновлении WEB Proxy или смене hostname. Update Center остаётся основным способом обновления установленной системы.
 
 Issues и Pull Requests приветствуются.
