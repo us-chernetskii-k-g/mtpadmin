@@ -47,18 +47,18 @@ esac
 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-01111.sh"
 
 # Regression guard for the Update Center routing bug: the installed assembled
-# web release must contain all protections before this updater can report PASS.
+# Python source contains the route template and server-side path parser rather
+# than pre-rendered per-component URLs. Validate those exact source contracts.
 source /etc/mtpadmin/web-runtime.env
 WEB_SERVICE=${WEB_ACTIVE_SERVICE:?}
 WEB_PID=$(systemctl show -p MainPID --value "$WEB_SERVICE")
 [[ "$WEB_PID" =~ ^[0-9]+$ && "$WEB_PID" -gt 0 ]] || die 'Не найден PID активного web slot.'
 WEB_SCRIPT=$(tr '\0' '\n' < "/proc/$WEB_PID/cmdline" | grep -E '^/.*mtpadmin-web-.*\.py$' | head -1 || true)
 [[ -f "$WEB_SCRIPT" ]] || die 'Не найден активный assembled web release.'
-grep -q "input:not(\[type=hidden\])" "$WEB_SCRIPT" || die 'Live-refresh hidden-field protection не попала в active web release.'
-for comp in mtpadmin telemt webproxy; do
-  grep -q "/action/component-update/$comp" "$WEB_SCRIPT" || die "Update Center route $comp не попал в active web release."
-done
-grep -q "path=='/action/component-update'" "$WEB_SCRIPT" || die 'Legacy component-update rejection не попал в active web release.'
+grep -Fq "input:not([type=hidden])" "$WEB_SCRIPT" || die 'Live-refresh hidden-field protection не попала в active web release.'
+grep -Fq "action='/action/component-update/{esc(key)}'" "$WEB_SCRIPT" || die 'Route-safe Update Center form не попала в active web release.'
+grep -Fq "prefix='/action/component-update/'" "$WEB_SCRIPT" || die 'Route-safe component parser не попал в active web release.'
+grep -Fq "if path=='/action/component-update':" "$WEB_SCRIPT" || die 'Legacy component-update rejection не попал в active web release.'
 
 /usr/local/bin/mtpadmin doctor
 ok 'MTPADMIN 0.11.12 updater завершён: route-safe Update Center + live-refresh form safety PASS.'
