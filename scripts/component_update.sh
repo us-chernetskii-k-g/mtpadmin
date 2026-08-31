@@ -8,6 +8,7 @@ STATUS='/var/lib/mtpadmin/component-update-status.json'
 CHECKER='/usr/local/lib/mtpadmin/update_check.py'
 WEBINSTALL='/usr/local/lib/mtpadmin/webproxy_install.sh'
 WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'
+WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'
 REPO_API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
 RAW='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 LOCK='/run/mtpadmin-component-update.lock'
@@ -91,11 +92,15 @@ repair_webproxy(){
   local commit="$1"
   [[ -x "$WEBINSTALL" ]] || die 'WEB Proxy installer не установлен'
   [[ -x "$WEBBACKEND" ]] || die 'Official MTProxy backend installer не установлен'
+  [[ -x "$WEBTELEMETRY" ]] || die 'WEB client telemetry installer не установлен'
   log_status "$COMPONENT" running "Проверяю relay ${commit:0:12}, конфиг и HTTPS"
   TPROXY_COMMIT_OVERRIDE="$commit" bash "$WEBINSTALL"
   log_status "$COMPONENT" running 'Проверяю official MTProxy localhost backend'
   bash "$WEBBACKEND"
+  log_status "$COMPONENT" running 'Проверяю privacy-safe WEB client telemetry'
+  bash "$WEBTELEMETRY"
   curl -fsS --max-time 3 http://127.0.0.1:8081/readyz >/dev/null || die 'WEB relay не READY после repair'
+  curl -fsS --max-time 3 http://127.0.0.1:8081/mtpadmin/clients | python3 -c 'import ipaddress,json,sys; d=json.load(sys.stdin); rows=d.get("clients"); assert isinstance(rows,list); [ipaddress.ip_address(str(x.get("ip"))) for x in rows]' >/dev/null || die 'WEB client telemetry не READY после repair'
   systemctl is-active --quiet mtpadmin-webproxy-mtproxy.service || die 'Official WEB MTProxy backend не active'
   ss -H -ltn 'sport = :2398' | grep -q . || die 'Official WEB MTProxy backend не слушает localhost:2398'
   python3 - /etc/tproxy-server/config.json <<'PY'
@@ -115,9 +120,9 @@ update_webproxy(){
   repair_webproxy "$latest"
   "$CHECKER" >/dev/null 2>&1 || true
   if [[ "$cur" == "$latest" ]]; then
-    log_status "$COMPONENT" success "WEB Proxy ${latest:0:12} актуален; relay/config/backend восстановлены"; ok 'WEB Proxy актуален; полный repair PASS'
+    log_status "$COMPONENT" success "WEB Proxy ${latest:0:12} актуален; relay/config/backend/telemetry восстановлены"; ok 'WEB Proxy актуален; полный repair PASS'
   else
-    log_status "$COMPONENT" success "WEB Proxy обновлён ${cur:0:12} → ${latest:0:12}; полный repair PASS"; ok "WEB Proxy обновлён → ${latest:0:12}; repair PASS"
+    log_status "$COMPONENT" success "WEB Proxy обновлён ${cur:0:12} → ${latest:0:12}; полный repair + telemetry PASS"; ok "WEB Proxy обновлён → ${latest:0:12}; repair PASS"
   fi
 }
 
@@ -129,9 +134,11 @@ set_webproxy_host(){
   log_status "$COMPONENT" running "Применяю hostname $host"
   WEBPROXY_HOST_OVERRIDE="$host" TPROXY_COMMIT_OVERRIDE="$cur" bash "$WEBINSTALL"
   bash "$WEBBACKEND"
+  bash "$WEBTELEMETRY"
   curl -fsS --max-time 3 http://127.0.0.1:8081/readyz >/dev/null || die 'WEB relay не READY после hostname change'
+  curl -fsS --max-time 3 http://127.0.0.1:8081/mtpadmin/clients >/dev/null || die 'WEB telemetry не READY после hostname change'
   "$CHECKER" >/dev/null 2>&1 || true
-  log_status "$COMPONENT" success "WEB Proxy hostname: $host; backend READY"; ok "WEB Proxy hostname: $host"
+  log_status "$COMPONENT" success "WEB Proxy hostname: $host; backend + telemetry READY"; ok "WEB Proxy hostname: $host"
 }
 
 update_mtpadmin(){
