@@ -30,7 +30,7 @@ s=s.replace('0.11.6','0.11.8')
 write_marker="p.write_text(s,encoding='utf-8')"
 if s.count(write_marker)!=1:
     raise SystemExit('0.11.6 transform write marker not found')
-extra=r'''
+extra=r"""
 # 0.11.8: make the final blue/green engine inherit the commit selected by the
 # Update Center instead of silently going back to a floating main branch.
 anchor='# 0.9.0 keeps the 0.8.2 normalized CLI and adds online-history analytics.\n'
@@ -60,7 +60,7 @@ web_args='''  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$T
 web_args_new='''  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" "$TMP/stability-extension.py" "$TMP/db-safety-extension.py" <<'PYWEBEXT'\n'''
 if s.count(web_args)!=1: raise SystemExit('0.11.8 web argument marker not found')
 s=s.replace(web_args,web_args_new,1)
-'''
+"""
 s=s.replace(write_marker,extra+'\n'+write_marker,1)
 p.write_text(s,encoding='utf-8')
 PY
