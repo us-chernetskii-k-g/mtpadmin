@@ -34,10 +34,10 @@ jobs:
       - name: Syntax and product version
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.11'
-          grep -q "VERSION='0.11.11'" update.sh
-          grep -q "VERSION='0.11.11'" web-install.sh
-          grep -q "BASE_01110_COMMIT='75f3268bad55d6dee5eae40abe8546ade481c1b9'" update.sh
+          test "$(cat VERSION)" = '0.11.12'
+          grep -q "VERSION='0.11.12'" update.sh
+          grep -q "VERSION='0.11.12'" web-install.sh
+          grep -q "BASE_01111_COMMIT='2805deea1364556677a352dcefeb049ae0ed6a48'" update.sh
           grep -q 'webproxy_telemetry_install.sh' update.sh
           grep -q 'WEBTELEMETRY=' scripts/component_update.sh
           bash -n /tmp/mtpadmin
@@ -57,10 +57,48 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.11')>(0,11,10)
+          assert u.semver('0.11.12')>(0,11,11)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
+          PY
+
+      - name: Update Center routing and live-refresh regression
+        run: |
+          python3 - <<'PY'
+          import importlib.util,re
+          spec=importlib.util.spec_from_file_location('w','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w._o_update_status=lambda:{'components':{
+              'mtpadmin':{'current':'0.11.11','latest':'0.11.12','available':True},
+              'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},
+              'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}},'checked_at':1,'updates':1}
+          w._o_component_status=lambda:{}
+          html=w._o_update_center('csrf-token')
+          assert "type='hidden' name='component'" not in html
+          for comp in ('mtpadmin','telemt','webproxy'):
+              assert f"name='component' value='{comp}'" in html,comp
+              assert f"data-component='{comp}'" in html,comp
+          doc=w.page_template('T','<input type="hidden" name="component" value="mtpadmin"><input name="q" value="abc">','admin')
+          assert doc.count('input:not([type=hidden])')>=2
+          assert "root.querySelectorAll('input,select,textarea')" not in doc
+
+          calls=[]; redirects=[]
+          w.csrf_ok=lambda user,token: True
+          def fake_run(args,timeout=10): calls.append(list(args)); return 0,'job'
+          w.run=fake_run
+          class Fake:
+              path='/action/component-update'
+              def require_user(self): return True
+              def user(self): return 'admin'
+              def form(self): return {'csrf':'x','component':self.component}
+              def redirect(self,where,msg=''): redirects.append((where,msg))
+              def send_html(self,*a,**k): raise AssertionError(('unexpected send_html',a,k))
+          for comp in ('mtpadmin','telemt','webproxy'):
+              f=Fake(); f.component=comp; w._o_do_POST(f)
+              assert calls[-1]==[w._O_COMPONENT,'dispatch',comp],calls[-1]
+              assert comp in redirects[-1][1]
+          assert [x[-1] for x in calls[-3:]]==['mtpadmin','telemt','webproxy']
+          print('Update Center routing PASS')
           PY
 
       - name: WEB client UI and collector contract
@@ -142,6 +180,8 @@ jobs:
           grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
           grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
           grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
+          grep -q "name='component' value='" web/mtpadmin_web.d/40-async-update-ui.py
+          ! grep -q "type='hidden' name='component'" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Seamless updater transformation
         run: |
