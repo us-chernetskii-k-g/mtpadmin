@@ -3,6 +3,8 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 # Clean-install bootstrap: core -> Caddy -> WEB hostname -> web panel -> current release.
+# The current release also provisions official WEB backend and loopback-only
+# WEB client telemetry, so clean installs and upgrades converge to one state.
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 STATE='/etc/mtpadmin/state.env'
@@ -60,9 +62,10 @@ PY
 ok "WEB Proxy hostname: $WP_HOST"
 
 # web-install performs the current core update, creates the first panel, then
-# switches it to the current blue/green runtime. WEB Proxy is provisioned by update.sh.
+# switches it to the current blue/green runtime. update.sh provisions/repairs
+# the WEB relay, official backend and privacy-safe client telemetry.
 curl -fsSL --retry 3 "$ROOT/main/web-install.sh" -o "$TMP/web-install.sh" || die 'Не удалось скачать web-install.sh.'
 chmod 0700 "$TMP/web-install.sh"; bash -n "$TMP/web-install.sh"
 bash "$TMP/web-install.sh"
 
-ok 'Чистая установка MTPADMIN завершена: TeleMT + Web + WEB Proxy + Update Center.'
+ok 'Чистая установка MTPADMIN завершена: TeleMT + Web + WEB Proxy + WEB client telemetry + Update Center.'
