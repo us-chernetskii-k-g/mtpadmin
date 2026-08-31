@@ -124,6 +124,21 @@ chmod 0644 /etc/systemd/system/mtpadmin-scanner-watchdog.service /etc/systemd/sy
 systemctl daemon-reload
 systemctl enable --now mtpadmin-scanner-watchdog.timer >/dev/null
 
+info 'Проверяю legacy TOML-размещение источников...'
+repair_out=$(/usr/local/lib/mtpadmin/user_config.py repair-misplaced 2>&1) || die "Source TOML migration failed: $repair_out"
+repair_count=$(printf '%s\n' "$repair_out" | head -1)
+if [[ "$repair_count" =~ ^[0-9]+$ ]] && (( repair_count > 0 )); then
+  ok "Восстановлено misplaced sources: $repair_count"
+  systemctl restart mtpadmin-telemt.service
+  ready=0
+  for i in {1..30}; do
+    systemctl is-active --quiet mtpadmin-telemt.service && curl -fsS --max-time 2 http://127.0.0.1:9091/v1/health/ready >/dev/null 2>&1 && { ready=1; break; }
+    sleep 1
+  done
+  (( ready == 1 )) || die 'TeleMT не вышел в READY после TOML source migration.'
+  systemctl restart mtpadmin-scanner.service >/dev/null 2>&1 || true
+fi
+
 info 'Проверяю/восстанавливаю Telegram WEB Proxy...'
 bash /usr/local/lib/mtpadmin/webproxy_install.sh
 bash /usr/local/lib/mtpadmin/webproxy_backend_install.sh

@@ -32,21 +32,19 @@ die(){ echo "[FAIL] $*" >&2; exit 1; }
 
 probe_telemt_source(){
   python3 - "$CFG" "$WEBPROXY_SOURCE" <<'PY'
-from pathlib import Path
-import re,sys
-p=Path(sys.argv[1]); wanted=sys.argv[2]
-section=None
-section_re=re.compile(r'^\s*\[([^\[\]]+)\]\s*(?:#.*)?$')
-key_re=re.compile(r'^\s*(?:"'+re.escape(wanted)+r'"|'+re.escape(wanted)+r')\s*=\s*"([0-9A-Fa-f]*)"\s*(?:#.*)?$')
-for raw in p.read_text(encoding='utf-8').splitlines():
-    m=section_re.match(raw)
-    if m:
-        section=m.group(1).strip(); continue
-    if section!='access.users': continue
-    m=key_re.match(raw)
-    if m:
-        print('1|'+m.group(1).lower()); raise SystemExit(0)
-print('0|')
+import sys,tomllib
+path,wanted=sys.argv[1:3]
+try:
+    with open(path,'rb') as f:
+        data=tomllib.load(f)
+except Exception:
+    print('0|'); raise SystemExit(0)
+users=((data.get('access') or {}).get('users') or {})
+secret=str(users.get(wanted) or '').lower()
+if len(secret)==32 and all(c in '0123456789abcdef' for c in secret):
+    print('1|'+secret)
+else:
+    print('0|')
 PY
 }
 
