@@ -31,14 +31,16 @@ if s.count(main_tail)!=1:
 extra=r"""
 # 0.11.8: make the final blue/green engine inherit the commit selected by the
 # Update Center instead of silently going back to a floating main branch.
-anchor='# 0.9.0 keeps the 0.8.2 normalized CLI and adds online-history analytics.\n'
+# At this layer the immutable 0.11.6 wrapper has already replaced every 0.9.0
+# literal in the downloaded wrapper with 0.11.8, including this comment.
+anchor='# 0.11.8 keeps the 0.8.2 normalized CLI and adds online-history analytics.\n'
 release_patch=anchor+'''old_raw="RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'"
 new_raw='RAW_BASE="https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/${MTPADMIN_RELEASE_REF:-main}"'
 if s.count(old_raw)!=1: raise SystemExit('0.11.8 RAW_BASE marker not found')
 s=s.replace(old_raw,new_raw,1)
 
 '''
-if s.count(anchor)!=1: raise SystemExit('0.11.8 0.9 extra anchor not found')
+if s.count(anchor)!=1: raise SystemExit('0.11.8 transformed 0.9 extra anchor not found')
 s=s.replace(anchor,release_patch,1)
 
 # Assemble the audited source lifecycle fragment in the generated CLI.
