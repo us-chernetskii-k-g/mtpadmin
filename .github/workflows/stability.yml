@@ -68,7 +68,7 @@ jobs:
           class A: pass
           a=A(); a.name='DEMO'; a.ad_tag='ffeeddccbbaa99887766554433221100'; a.max_conns='123'; a.max_ips='7'; u.edit(a)
           a.ad_tag='none'; a.max_conns='none'; a.max_ips='none'; u.edit(a)
-          b=A(); b.name='AD_01'; b.secret='11111111111111111111111111111111'; b.ad_tag=None; b.max_conns=None; b.max_ips=None; u.add(b)
+          b=A(); b.name='AD_01'; b.secret='11'*16; b.ad_tag=None; b.max_conns=None; b.max_ips=None; u.add(b)
           with open(p,'rb') as f:d=tomllib.load(f)
           assert d['access']['users']['AD_01']==b.secret and 'AD_01' not in d['upstreams'][0]
           p.write_text('[access.users]\n"MAIN"="00112233445566778899aabbccddeeff"\n\n[[upstreams]]\ntype="direct"\n"WEB_PROXY"="22222222222222222222222222222222"\n')
