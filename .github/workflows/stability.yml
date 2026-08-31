@@ -172,9 +172,9 @@ jobs:
           grep -q 'PATCH_LEVEL=' scripts/webproxy_telemetry_install.sh
           grep -q '/mtpadmin/clients' scripts/webproxy_telemetry_install.sh
           grep -q "WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'" scripts/component_update.sh
-          for comp in mtpadmin telemt webproxy; do grep -q "/action/component-update/$comp" web/mtpadmin_web.d/40-async-update-ui.py; done
-          grep -q "path=='/action/component-update'" web/mtpadmin_web.d/40-async-update-ui.py
-          ! grep -q "name='component'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "action='/action/component-update/{esc(key)}'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "prefix='/action/component-update/'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "if path=='/action/component-update':" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Scanner Guard self-heal contract
         run: |
