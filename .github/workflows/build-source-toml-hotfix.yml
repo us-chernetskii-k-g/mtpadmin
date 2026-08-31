@@ -15,40 +15,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply audited hotfix transforms
+      - name: Apply audited runtime hotfix
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
 
-          def replace_once(path, old, new, label):
-              p=Path(path); s=p.read_text(encoding='utf-8')
-              if new in s:
-                  return
-              if s.count(old)!=1:
-                  raise SystemExit(f'{label}: expected one marker, found {s.count(old)}')
-              p.write_text(s.replace(old,new,1),encoding='utf-8')
-
-          # Release version.
-          Path('VERSION').write_text('0.11.9\n',encoding='utf-8')
-          for path in ('update.sh','web-install.sh','scripts/webproxy_install.sh'):
-              p=Path(path); s=p.read_text(encoding='utf-8')
-              s=s.replace("0.11.8","0.11.9")
-              p.write_text(s,encoding='utf-8')
-
-          # WEB Proxy source probe must use TOML semantics, not a regex that
-          # scans through [[array-of-tables]].
           p=Path('scripts/webproxy_install.sh'); s=p.read_text(encoding='utf-8')
           old='''probe_telemt_source(){\n  python3 - "$CFG" "$WEBPROXY_SOURCE" <<'PY'\nfrom pathlib import Path\nimport re,sys\np=Path(sys.argv[1]); wanted=sys.argv[2]\nsection=None\nsection_re=re.compile(r'^\\s*\\[([^\\[\\]]+)\\]\\s*(?:#.*)?$')\nkey_re=re.compile(r'^\\s*(?:"'+re.escape(wanted)+r'"|'+re.escape(wanted)+r')\\s*=\\s*"([0-9A-Fa-f]*)"\\s*(?:#.*)?$')\nfor raw in p.read_text(encoding='utf-8').splitlines():\n    m=section_re.match(raw)\n    if m:\n        section=m.group(1).strip(); continue\n    if section!='access.users': continue\n    m=key_re.match(raw)\n    if m:\n        print('1|'+m.group(1).lower()); raise SystemExit(0)\nprint('0|')\nPY\n}\n'''
           new='''probe_telemt_source(){\n  python3 - "$CFG" "$WEBPROXY_SOURCE" <<'PY'\nimport sys,tomllib\npath,wanted=sys.argv[1:3]\ntry:\n    with open(path,'rb') as f:\n        data=tomllib.load(f)\nexcept Exception:\n    print('0|'); raise SystemExit(0)\nusers=((data.get('access') or {}).get('users') or {})\nsecret=str(users.get(wanted) or '').lower()\nif len(secret)==32 and all(c in '0123456789abcdef' for c in secret):\n    print('1|'+secret)\nelse:\n    print('0|')\nPY\n}\n'''
-          if old not in s:
-              raise SystemExit('webproxy probe marker not found')
-          s=s.replace(old,new,1)
+          if new not in s:
+              if s.count(old)!=1: raise SystemExit('webproxy probe marker not found')
+              s=s.replace(old,new,1)
           p.write_text(s,encoding='utf-8')
 
-          # Automatically migrate configs written by 0.11.8 before WEB Proxy
-          # repair touches TeleMT. Secrets are preserved; no source is rotated.
           p=Path('update.sh'); s=p.read_text(encoding='utf-8')
           marker="info 'Проверяю/восстанавливаю Telegram WEB Proxy...'\n"
           migration='''info 'Проверяю legacy TOML-размещение источников...'\nrepair_out=$(/usr/local/lib/mtpadmin/user_config.py repair-misplaced 2>&1) || die "Source TOML migration failed: $repair_out"\nrepair_count=$(printf '%s\\n' "$repair_out" | head -1)\nif [[ "$repair_count" =~ ^[0-9]+$ ]] && (( repair_count > 0 )); then\n  ok "Восстановлено misplaced sources: $repair_count"\n  systemctl restart mtpadmin-telemt.service\n  ready=0\n  for i in {1..30}; do\n    systemctl is-active --quiet mtpadmin-telemt.service && curl -fsS --max-time 2 http://127.0.0.1:9091/v1/health/ready >/dev/null 2>&1 && { ready=1; break; }\n    sleep 1\n  done\n  (( ready == 1 )) || die 'TeleMT не вышел в READY после TOML source migration.'\n  systemctl restart mtpadmin-scanner.service >/dev/null 2>&1 || true\nfi\n\n'''
@@ -56,34 +37,57 @@ jobs:
               if s.count(marker)!=1: raise SystemExit('WEB repair marker not found')
               s=s.replace(marker,migration+marker,1)
           p.write_text(s,encoding='utf-8')
-
-          # Keep both CI workflows on the released version.
-          for path in ('.github/workflows/ci.yml','.github/workflows/stability.yml'):
-              p=Path(path); s=p.read_text(encoding='utf-8').replace('0.11.8','0.11.9')
-              p.write_text(s,encoding='utf-8')
-
-          # Add an exact regression for the production failure: a source added
-          # before [[upstreams]] must remain under [access.users], and old
-          # misplaced 32-hex source keys must be recoverable.
-          p=Path('.github/workflows/stability.yml'); s=p.read_text(encoding='utf-8')
-          anchor='      - name: WEB Proxy production contracts\n'
-          step='''      - name: TOML array boundary and migration regression\n        run: |\n          set -euo pipefail\n          cat >/tmp/source-boundary.toml <<'EOF'\n          [access.users]\n          "MAIN" = "00112233445566778899aabbccddeeff"\n\n          [[upstreams]]\n          type = "direct"\n          enabled = true\n          weight = 10\n          EOF\n          MTPADMIN_CONFIG=/tmp/source-boundary.toml python3 src/user_config.py add AD_01 --secret 11111111111111111111111111111111 >/dev/null\n          python3 - <<'PYTEST'\n          import tomllib\n          with open('/tmp/source-boundary.toml','rb') as f:d=tomllib.load(f)\n          assert d['access']['users']['AD_01']=='11111111111111111111111111111111'\n          assert 'AD_01' not in d['upstreams'][0]\n          PYTEST\n          cat >/tmp/source-repair.toml <<'EOF'\n          [access.users]\n          "MAIN" = "00112233445566778899aabbccddeeff"\n\n          [[upstreams]]\n          type = "direct"\n          enabled = true\n          weight = 10\n          "WEB_PROXY" = "22222222222222222222222222222222"\n          "AD_02" = "33333333333333333333333333333333"\n          EOF\n          out=$(MTPADMIN_CONFIG=/tmp/source-repair.toml python3 src/user_config.py repair-misplaced)\n          test "$(printf '%s\\n' "$out" | head -1)" = 2\n          python3 - <<'PYTEST'\n          import tomllib\n          with open('/tmp/source-repair.toml','rb') as f:d=tomllib.load(f)\n          assert d['access']['users']['WEB_PROXY']=='22222222222222222222222222222222'\n          assert d['access']['users']['AD_02']=='33333333333333333333333333333333'\n          assert 'WEB_PROXY' not in d['upstreams'][0]\n          assert 'AD_02' not in d['upstreams'][0]\n          PYTEST\n\n'''
-          if step not in s:
-              if s.count(anchor)!=1: raise SystemExit('stability insertion anchor not found')
-              s=s.replace(anchor,step+anchor,1)
-          p.write_text(s,encoding='utf-8')
           PY
 
           bash -n update.sh scripts/webproxy_install.sh
           python3 -m py_compile src/user_config.py
+
+          cat >/tmp/source-boundary.toml <<'EOF'
+          [access.users]
+          "MAIN" = "00112233445566778899aabbccddeeff"
+
+          [[upstreams]]
+          type = "direct"
+          enabled = true
+          weight = 10
+          EOF
+          MTPADMIN_CONFIG=/tmp/source-boundary.toml python3 src/user_config.py add AD_01 --secret 11111111111111111111111111111111 >/dev/null
+          python3 - <<'PY'
+          import tomllib
+          with open('/tmp/source-boundary.toml','rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['AD_01']=='11111111111111111111111111111111'
+          assert 'AD_01' not in d['upstreams'][0]
+          PY
+
+          cat >/tmp/source-repair.toml <<'EOF'
+          [access.users]
+          "MAIN" = "00112233445566778899aabbccddeeff"
+
+          [[upstreams]]
+          type = "direct"
+          enabled = true
+          weight = 10
+          "WEB_PROXY" = "22222222222222222222222222222222"
+          "AD_02" = "33333333333333333333333333333333"
+          EOF
+          out=$(MTPADMIN_CONFIG=/tmp/source-repair.toml python3 src/user_config.py repair-misplaced)
+          test "$(printf '%s\n' "$out" | head -1)" = 2
+          python3 - <<'PY'
+          import tomllib
+          with open('/tmp/source-repair.toml','rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['WEB_PROXY']=='22222222222222222222222222222222'
+          assert d['access']['users']['AD_02']=='33333333333333333333333333333333'
+          assert 'WEB_PROXY' not in d['upstreams'][0]
+          assert 'AD_02' not in d['upstreams'][0]
+          PY
           git diff --check
-      - name: Commit generated hotfix
+      - name: Commit generated runtime hotfix
         shell: bash
         run: |
           set -euo pipefail
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add VERSION update.sh web-install.sh scripts/webproxy_install.sh src/user_config.py .github/workflows/ci.yml .github/workflows/stability.yml
+          git add update.sh scripts/webproxy_install.sh src/user_config.py
           git diff --cached --quiet && exit 0
-          git commit -m 'Release 0.11.9 source TOML hotfix'
+          git commit -m 'Fix source TOML array-table corruption'
           git push origin HEAD:hotfix-0.11.9-source-toml
