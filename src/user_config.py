@@ -2,11 +2,17 @@
 import argparse, os, re, secrets, stat, tempfile
 from pathlib import Path
 
-CFG = Path('/etc/mtpadmin/config/config.toml')
+CFG = Path(os.environ.get('MTPADMIN_CONFIG', '/etc/mtpadmin/config/config.toml'))
 NAME_RE = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
 HEX32_RE = re.compile(r'^[0-9a-f]{32}$')
 SECTION_RE = re.compile(r'^\s*\[([^\[\]]+)\]\s*(?:#.*)?$')
+ARRAY_SECTION_RE = re.compile(r'^\s*\[\[([^\[\]]+)\]\]\s*(?:#.*)?$')
 KEY_RE_TEMPLATE = r'^\s*(?:"{q}"|{u})\s*='
+MISPLACED_SECRET_RE = re.compile(r'^\s*(?:"([A-Za-z0-9_.-]{1,64})"|([A-Za-z0-9_.-]{1,64}))\s*=\s*"([0-9A-Fa-f]{32})"\s*(?:#.*)?$')
+UPSTREAM_RESERVED = {
+    'type', 'enabled', 'weight', 'ad_tag', 'host', 'address', 'port',
+    'secret', 'proxy_secret', 'name', 'tls_domain', 'sni'
+}
 
 
 def q(s: str) -> str:
@@ -17,16 +23,29 @@ def load_lines():
     return CFG.read_text(encoding='utf-8').splitlines(keepends=True)
 
 
+def table_header(line):
+    m = SECTION_RE.match(line)
+    if m:
+        return 'table', m.group(1).strip()
+    m = ARRAY_SECTION_RE.match(line)
+    if m:
+        return 'array', m.group(1).strip()
+    return None
+
+
 def section_bounds(lines, section):
     start = None
     for i, line in enumerate(lines):
-        m = SECTION_RE.match(line)
-        if not m:
+        h = table_header(line)
+        if not h:
             continue
+        kind, name = h
         if start is None:
-            if m.group(1).strip() == section:
+            if kind == 'table' and name == section:
                 start = i
         else:
+            # Any TOML table header, including [[array-of-tables]], ends the
+            # current ordinary table. This is the boundary 0.11.8 missed.
             return start, i
     if start is not None:
         return start, len(lines)
@@ -124,6 +143,45 @@ def parse_limit(value, label):
     if n < 1 or n > 10_000_000:
         raise SystemExit(f'{label} must be in range 1..10000000')
     return n
+
+
+def repair_misplaced(args):
+    """Recover 0.11.8 sources accidentally written inside [[upstreams]]."""
+    lines = load_lines()
+    found = []
+    remove = []
+    in_upstreams = False
+
+    for i, line in enumerate(lines):
+        h = table_header(line)
+        if h:
+            in_upstreams = (h == ('array', 'upstreams'))
+            continue
+        if not in_upstreams:
+            continue
+        m = MISPLACED_SECRET_RE.match(line)
+        if not m:
+            continue
+        name = m.group(1) or m.group(2)
+        secret = m.group(3).lower()
+        if name in UPSTREAM_RESERVED or not NAME_RE.fullmatch(name):
+            continue
+        remove.append(i)
+        if not source_exists(lines, name):
+            found.append((name, secret))
+
+    if not remove:
+        print('0')
+        return
+
+    for i in reversed(remove):
+        del lines[i]
+    for name, secret in found:
+        set_key(lines, 'access.users', name, q(secret))
+    write_atomic(lines)
+    print(str(len(found)))
+    for name, _ in found:
+        print(name)
 
 
 def add(args):
@@ -228,6 +286,7 @@ def main():
     a=sub.add_parser('delete'); a.add_argument('name'); a.set_defaults(fn=delete)
     a=sub.add_parser('limits'); a.add_argument('name'); a.add_argument('--max-conns'); a.add_argument('--max-ips'); a.set_defaults(fn=set_limits)
     a=sub.add_parser('edit'); a.add_argument('name'); a.add_argument('--ad-tag'); a.add_argument('--max-conns'); a.add_argument('--max-ips'); a.set_defaults(fn=edit)
+    a=sub.add_parser('repair-misplaced'); a.set_defaults(fn=repair_misplaced)
     args=p.parse_args(); args.fn(args)
 
 if __name__ == '__main__': main()
