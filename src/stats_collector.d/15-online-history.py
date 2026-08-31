@@ -1,8 +1,11 @@
-# MTPADMIN 0.11.10 online-history extension.
-# Adds WEB Proxy relay sessions/bytes alongside TeleMT runtime telemetry.
+# MTPADMIN 0.11.11 online-history extension.
+# Adds WEB Proxy relay sessions/bytes and active client IPs alongside TeleMT.
+# WEB client IPs come from the loopback-only patched tproxy admin endpoint;
+# raw IP retention remains governed by the same MTPADMIN retention policy.
 
 _ONLINE_SAMPLE_SECONDS = 30
 _TPROXY_METRICS = 'http://127.0.0.1:8081/metrics'
+_TPROXY_CLIENTS = 'http://127.0.0.1:8081/mtpadmin/clients'
 _online_last_sample = 0
 
 
@@ -44,6 +47,42 @@ def _tproxy_metrics():
         return {}
 
 
+def _tproxy_client_rows():
+    try:
+        req = urllib.request.Request(_TPROXY_CLIENTS, headers={'Accept':'application/json'})
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            obj = json.loads(r.read().decode('utf-8','replace'))
+        rows = obj.get('clients') if isinstance(obj,dict) else None
+        if not isinstance(rows,list):
+            return []
+        out=[]
+        for row in rows:
+            if not isinstance(row,dict):
+                continue
+            try:
+                ip=str(ipaddress.ip_address(str(row.get('ip') or '')))
+                sessions=int(row.get('sessions') or 0)
+            except (ValueError,TypeError):
+                continue
+            if sessions > 0:
+                out.append({'ip':ip,'sessions':sessions})
+        return out
+    except Exception:
+        return []
+
+
+# Merge WEB relay clients into the collector's proven active-pair path. This
+# makes existing GeoIP, first/last seen, anonymous history and retention logic
+# work identically for TeleMT and WEB_PROXY without a second database path.
+_base_active_pairs = active_pairs
+def active_pairs():
+    out=set(_base_active_pairs())
+    st=state(); web_source=str(st.get('WEBPROXY_SOURCE','WEB_PROXY') or 'WEB_PROXY')
+    for row in _tproxy_client_rows():
+        out.add((web_source,row['ip']))
+    return out
+
+
 def _sample_online(con, users_metrics, active, now, web_metrics=None, web_source='WEB_PROXY'):
     global _online_last_sample
     if now - _online_last_sample < _ONLINE_SAMPLE_SECONDS:
@@ -68,17 +107,16 @@ def _sample_online(con, users_metrics, active, now, web_metrics=None, web_source
                        connections=excluded.connections,unique_ips=excluded.unique_ips''',
                     (bucket, user, live, uniq))
 
-    # WEB traffic bypasses TeleMT and is terminated by tproxy-server -> official
-    # MTProxy. Current upstream metrics expose sessions/streams/bytes, but not
-    # client IP cardinality. Store live WEB sessions as connections and keep
-    # unique_ips=0 rather than inventing an IP count.
+    # WEB traffic bypasses TeleMT. Sessions come from relay metrics while
+    # unique IPs come from the loopback telemetry endpoint.
     if web_metrics:
         web_live = int(web_metrics.get('tproxy_sessions_live', 0) or 0)
+        web_unique = len(active_by_user.get(web_source, ()))
         total_connections += web_live
         con.execute('''INSERT INTO online_samples(ts,username,connections,unique_ips)
-                       VALUES(?,?,?,0) ON CONFLICT(ts,username) DO UPDATE SET
-                       connections=excluded.connections,unique_ips=0''',
-                    (bucket, web_source, web_live))
+                       VALUES(?,?,?,?) ON CONFLICT(ts,username) DO UPDATE SET
+                       connections=excluded.connections,unique_ips=excluded.unique_ips''',
+                    (bucket, web_source, web_live, web_unique))
 
     con.execute('''INSERT INTO online_samples(ts,username,connections,unique_ips)
                    VALUES(?,?,?,?) ON CONFLICT(ts,username) DO UPDATE SET
@@ -87,7 +125,7 @@ def _sample_online(con, users_metrics, active, now, web_metrics=None, web_source
     _online_last_sample = now
 
 
-def _sample_web_traffic(con, metrics, web_source, now):
+def _sample_web_traffic(con, metrics, web_source, now, web_unique=0):
     if not metrics:
         return
     day = dt.datetime.now().date().isoformat()
@@ -104,12 +142,13 @@ def _sample_web_traffic(con, metrics, web_source, now):
         df = delta(cur_from, prev[1])
         dtb = delta(cur_to, prev[2])
     con.execute('''INSERT INTO daily_traffic(day,username,connections,bad_connections,bytes_from_client,bytes_to_client,peak_connections,peak_unique_ips)
-                   VALUES(?,?,?,?,?,?,?,0) ON CONFLICT(day,username) DO UPDATE SET
+                   VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(day,username) DO UPDATE SET
                    connections=connections+excluded.connections,
                    bytes_from_client=bytes_from_client+excluded.bytes_from_client,
                    bytes_to_client=bytes_to_client+excluded.bytes_to_client,
-                   peak_connections=max(peak_connections,excluded.peak_connections)''',
-                (day, web_source, dc, 0, df, dtb, live))
+                   peak_connections=max(peak_connections,excluded.peak_connections),
+                   peak_unique_ips=max(peak_unique_ips,excluded.peak_unique_ips)''',
+                (day, web_source, dc, 0, df, dtb, live, int(web_unique or 0)))
     con.execute('''INSERT INTO counter_state(username,conn_total,bad_total,bytes_from,bytes_to,updated_at)
                    VALUES(?,?,?,?,?,?) ON CONFLICT(username) DO UPDATE SET
                    conn_total=excluded.conn_total,bytes_from=excluded.bytes_from,
@@ -126,10 +165,11 @@ def sample_counters(con, active):
     st = state()
     web_source = str(st.get('WEBPROXY_SOURCE','WEB_PROXY') or 'WEB_PROXY')
     web_metrics = _tproxy_metrics()
+    web_unique = len({ip for user,ip in active if str(user)==web_source})
     _sample_online(con, users_metrics, active, now, web_metrics, web_source)
     # Preserve proven TeleMT traffic/counter logic exactly as before.
     result = _base_sample_counters(con, active)
-    _sample_web_traffic(con, web_metrics, web_source, now)
+    _sample_web_traffic(con, web_metrics, web_source, now, web_unique)
     return result
 
 
