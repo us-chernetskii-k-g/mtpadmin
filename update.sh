@@ -31,6 +31,18 @@ write_marker="p.write_text(s,encoding='utf-8')"
 if s.count(write_marker)!=1:
     raise SystemExit('0.11.6 transform write marker not found')
 extra=r'''
+# 0.11.8: make the final blue/green engine inherit the commit selected by the
+# Update Center instead of silently going back to a floating main branch.
+anchor='# 0.9.0 keeps the 0.8.2 normalized CLI and adds online-history analytics.\n'
+release_patch=anchor+'''old_raw="RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'"
+new_raw='RAW_BASE="https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/${MTPADMIN_RELEASE_REF:-main}"'
+if s.count(old_raw)!=1: raise SystemExit('0.11.8 RAW_BASE marker not found')
+s=s.replace(old_raw,new_raw,1)
+
+'''
+if s.count(anchor)!=1: raise SystemExit('0.11.8 0.9 extra anchor not found')
+s=s.replace(anchor,release_patch,1)
+
 # 0.11.8: assemble the audited source lifecycle fragment in the generated CLI.
 cli_old='for part in 00-core.sh 10-sources.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
 cli_new='for part in 00-core.sh 10-sources.sh 11-source-stability.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
@@ -55,6 +67,7 @@ PY
 
 bash -n "$TMP/update-0116.sh" || die '0.11.8 сформировал невалидный updater.'
 grep -q "VERSION='0.11.8'" "$TMP/update-0116.sh" || die 'Версия updater не обновилась.'
+grep -q 'MTPADMIN_RELEASE_REF' "$TMP/update-0116.sh" || die 'Commit-pinned RAW_BASE не встроен.'
 grep -q '11-source-stability.sh' "$TMP/update-0116.sh" || die 'Source stability CLI не встроен.'
 grep -q '42-stability.py' "$TMP/update-0116.sh" || die 'Web stability extension не встроен.'
 grep -q '43-db-safety.py' "$TMP/update-0116.sh" || die 'DB safety extension не встроен.'
