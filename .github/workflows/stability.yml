@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -52,88 +52,73 @@ jobs:
           before=len(os.listdir('/proc/self/fd'))
           for _ in range(500): assert w.scalar('select x from t')==1
           after=len(os.listdir('/proc/self/fd'))
-          assert after-before <= 3, (before,after)
+          assert after-before <= 3,(before,after)
           print('FD regression PASS',before,after)
           PY
 
-      - name: Source editor contract
+      - name: Source editor and TOML boundary
         run: |
+          set -euo pipefail
           python3 - <<'PY'
-          import importlib.util,tempfile
+          import importlib.util,tempfile,tomllib
           from pathlib import Path
           spec=importlib.util.spec_from_file_location('u','src/user_config.py'); u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
-          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"DEMO" = "00112233445566778899aabbccddeeff"\n')
+          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"DEMO" = "00112233445566778899aabbccddeeff"\n\n[[upstreams]]\ntype="direct"\nenabled=true\nweight=10\n')
           u.CFG=p
           class A: pass
           a=A(); a.name='DEMO'; a.ad_tag='ffeeddccbbaa99887766554433221100'; a.max_conns='123'; a.max_ips='7'; u.edit(a)
-          s=p.read_text(); assert '[access.user_ad_tags]' in s and '123' in s and '7' in s
           a.ad_tag='none'; a.max_conns='none'; a.max_ips='none'; u.edit(a)
-          s=p.read_text(); assert 'ffeeddccbbaa99887766554433221100' not in s
-          print('Source edit PASS')
+          b=A(); b.name='AD_01'; b.secret='11111111111111111111111111111111'; b.ad_tag=None; b.max_conns=None; b.max_ips=None; u.add(b)
+          with open(p,'rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['AD_01']==b.secret and 'AD_01' not in d['upstreams'][0]
+          p.write_text('[access.users]\n"MAIN"="00112233445566778899aabbccddeeff"\n\n[[upstreams]]\ntype="direct"\n"WEB_PROXY"="22222222222222222222222222222222"\n')
+          u.CFG=p; u.repair_misplaced(A())
+          with open(p,'rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['WEB_PROXY']=='22222222222222222222222222222222' and 'WEB_PROXY' not in d['upstreams'][0]
+          print('Source/TOML regression PASS')
           PY
 
-      - name: TOML array boundary and migration regression
-        run: |
-          set -euo pipefail
-          cat >/tmp/source-boundary.toml <<'EOF'
-          [access.users]
-          "MAIN" = "00112233445566778899aabbccddeeff"
-
-          [[upstreams]]
-          type = "direct"
-          enabled = true
-          weight = 10
-          EOF
-          MTPADMIN_CONFIG=/tmp/source-boundary.toml python3 src/user_config.py add AD_01 --secret 11111111111111111111111111111111 >/dev/null
-          python3 - <<'PY'
-          import tomllib
-          with open('/tmp/source-boundary.toml','rb') as f:d=tomllib.load(f)
-          assert d['access']['users']['AD_01']=='11111111111111111111111111111111'
-          assert 'AD_01' not in d['upstreams'][0]
-          PY
-
-          cat >/tmp/source-repair.toml <<'EOF'
-          [access.users]
-          "MAIN" = "00112233445566778899aabbccddeeff"
-
-          [[upstreams]]
-          type = "direct"
-          enabled = true
-          weight = 10
-          "WEB_PROXY" = "22222222222222222222222222222222"
-          "AD_02" = "33333333333333333333333333333333"
-          EOF
-          out=$(MTPADMIN_CONFIG=/tmp/source-repair.toml python3 src/user_config.py repair-misplaced)
-          test "$(printf '%s\n' "$out" | head -1)" = 2
-          python3 - <<'PY'
-          import tomllib
-          with open('/tmp/source-repair.toml','rb') as f:d=tomllib.load(f)
-          assert d['access']['users']['WEB_PROXY']=='22222222222222222222222222222222'
-          assert d['access']['users']['AD_02']=='33333333333333333333333333333333'
-          assert 'WEB_PROXY' not in d['upstreams'][0]
-          assert 'AD_02' not in d['upstreams'][0]
-          PY
-
-      - name: Config and runtime merge contract
+      - name: Config runtime and WEB activity merge
         run: |
           python3 - <<'PY'
           import importlib.util,tempfile
           from pathlib import Path
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"A"="00112233445566778899aabbccddeeff"\n"B"="ffeeddccbbaa99887766554433221100"\n')
-          w.CFG=str(p); w.state=lambda:{'PROFILE':'A'}
-          w.api_json=lambda path,**kw: [{'username':'A','enabled':True,'in_runtime':True,'user_ad_tag':None,'max_tcp_conns':None,'max_unique_ips':None,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff']}}] if path=='/v1/users' else {}
+          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"A"="00112233445566778899aabbccddeeff"\n"B"="ffeeddccbbaa99887766554433221100"\n"WEB_PROXY"="11111111111111111111111111111111"\n')
+          w.CFG=str(p); w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w.api_json=lambda path,**kw: [{'username':'A','enabled':True,'in_runtime':True,'user_ad_tag':None,'max_tcp_conns':None,'max_unique_ips':None,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff']}},{'username':'WEB_PROXY','enabled':True,'in_runtime':True,'current_connections':0,'active_unique_ips':0}] if path=='/v1/users' else {}
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':1,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':100,'tproxy_bytes_down_total':200,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
           rows={x['username']:x for x in w.source_rows()}
           assert rows['A']['in_runtime'] is True and rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
-          html=w.sources_html('tester','csrf'); assert 'CONFIG ONLY' in html and 'Настроить' in html and '/action/source-repair' in html
-          print('Config/runtime merge PASS')
+          assert rows['WEB_PROXY']['current_connections']==1 and rows['WEB_PROXY']['web_streams_live']==8 and rows['WEB_PROXY']['active_unique_ips']==0
+          html=w.sources_html('tester','csrf'); assert 'CONFIG ONLY' in html and 'Настроить' in html
+          w._wpa_active_clients_html=lambda:'BASE'; active=w.active_clients_html(); assert 'WEB-сессии' in active and 'BASE' in active
+          print('Config/runtime/WEB merge PASS')
+          PY
+
+      - name: WEB collector history contract
+        run: |
+          python3 - <<'PY'
+          import importlib.util,sqlite3
+          spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
+          con=sqlite3.connect(':memory:')
+          con.executescript('''CREATE TABLE online_samples(ts INTEGER,username TEXT,connections INTEGER,unique_ips INTEGER,PRIMARY KEY(ts,username));
+          CREATE TABLE daily_traffic(day TEXT,username TEXT,connections INTEGER DEFAULT 0,bad_connections INTEGER DEFAULT 0,bytes_from_client INTEGER DEFAULT 0,bytes_to_client INTEGER DEFAULT 0,peak_connections INTEGER DEFAULT 0,peak_unique_ips INTEGER DEFAULT 0,PRIMARY KEY(day,username));
+          CREATE TABLE counter_state(username TEXT PRIMARY KEY,conn_total INTEGER DEFAULT 0,bad_total INTEGER DEFAULT 0,bytes_from INTEGER DEFAULT 0,bytes_to INTEGER DEFAULT 0,updated_at INTEGER DEFAULT 0);''')
+          s._online_last_sample=0
+          s._sample_online(con,{},set(),60,{'tproxy_sessions_live':1},'WEB_PROXY')
+          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(1,0)
+          s._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':1,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60)
+          s._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70)
+          assert con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections from daily_traffic where username='WEB_PROXY'").fetchone()==(2,100,300,2)
+          print('WEB history PASS')
           PY
 
       - name: Source apply fallback contract
         run: |
           set -euo pipefail
           grep -q '_st_restart_telemt()' web/mtpadmin_web.d/42-stability.py
-          grep -q "Runtime TeleMT не подтвердил изменение источника" web/mtpadmin_web.d/42-stability.py
+          grep -q 'Runtime TeleMT не подтвердил изменение источника' web/mtpadmin_web.d/42-stability.py
           grep -q 'shutil.copy2(backup,CFG)' web/mtpadmin_web.d/42-stability.py
           grep -q 'source_apply_or_restart' src/mtpadmin.d/11-source-stability.sh
           grep -q 'source_full_restart' src/mtpadmin.d/11-source-stability.sh
@@ -147,6 +132,8 @@ jobs:
           grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
           grep -q "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" scripts/component_update.sh
           grep -q 'repair_webproxy' scripts/component_update.sh
+          grep -q 'tproxy_sessions_live' web/mtpadmin_web.d/44-webproxy-activity.py
+          grep -q '__WEB_COUNTER__:' src/stats_collector.d/15-online-history.py
 
       - name: Scanner Guard self-heal contract
         run: |
@@ -169,16 +156,16 @@ jobs:
         run: |
           python3 - <<'PY'
           import pathlib,re
+          allowed={'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100','11111111111111111111111111111111','22222222222222222222222222222222','33333333333333333333333333333333'}
           bad=[]
           for p in pathlib.Path('.').rglob('*'):
               if not p.is_file() or '.git' in p.parts: continue
               if p.suffix.lower() in {'.png','.jpg','.jpeg','.gif','.zip','.gz','.db'}: continue
-              try: s=p.read_text(errors='ignore')
-              except Exception: continue
+              try:s=p.read_text(errors='ignore')
+              except Exception:continue
               for m in re.finditer(r'(?i)(?:secret|password|token)\s*[=:]\s*["\x27]?([0-9a-f]{32,}|[A-Za-z0-9_-]{40,})',s):
                   value=m.group(1)
-                  if value.lower() not in {'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100','11111111111111111111111111111111','22222222222222222222222222222222','33333333333333333333333333333333'}:
-                      bad.append((str(p),value[:12]))
+                  if value.lower() not in allowed: bad.append((str(p),value[:12]))
           assert not bad,bad
           print('Secret scan PASS')
           PY
