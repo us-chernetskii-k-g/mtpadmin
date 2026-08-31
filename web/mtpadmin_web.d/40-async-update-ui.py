@@ -39,3 +39,19 @@ def _o_update_center(csrf):
     return (f"<div class='card'><div class='a-head'><div><h2>Update Center</h2><div class='muted'>Последняя проверка: {esc(checked_txt)}</div></div>{checkform}</div>"
             f"{table(['Компонент','Установлено','Доступно','Статус','Действие'],rows)}{op_html}"
             "<div class='muted' style='margin-top:10px'>Одновременно выполняется только одна операция. Можно уйти со страницы: системная задача продолжится сама. TeleMT использует backup/rollback, MTPADMIN — blue/green.</div></div>")
+
+
+# Global live-refresh safety. Hidden fields are server-authored action data
+# (CSRF, source name, component, etc.) and must never be restored from a stale
+# DOM snapshot. Only visible/editable controls are preserved across refresh.
+_au_page_template_prev = page_template
+
+def page_template(title, body, user, active="dashboard", refresh=None, message=""):
+    doc = _au_page_template_prev(title, body, user, active=active, refresh=refresh, message=message)
+    old_controls = "function controls(){const out={}; root.querySelectorAll('input,select,textarea').forEach((e,i)=>{const k=e.id||e.name||('i'+i); if(e.type==='checkbox'||e.type==='radio')out[k]={c:e.checked};else out[k]={v:e.value};}); return out;}"
+    old_restore = "function restore(s){root.querySelectorAll('input,select,textarea').forEach((e,i)=>{const k=e.id||e.name||('i'+i),v=s[k]; if(!v)return; if('c'in v)e.checked=v.c;else if('v'in v)e.value=v.v;});}"
+    new_controls = "function controls(){const out={}; const els=[...root.querySelectorAll('input:not([type=hidden]),select,textarea')]; els.forEach((e,i)=>{const k=e.id||((e.form?.action||'')+'|'+(e.name||e.tagName)+'|'+i); if(e.type==='checkbox'||e.type==='radio')out[k]={c:e.checked};else out[k]={v:e.value};}); return out;}"
+    new_restore = "function restore(s){const els=[...root.querySelectorAll('input:not([type=hidden]),select,textarea')]; els.forEach((e,i)=>{const k=e.id||((e.form?.action||'')+'|'+(e.name||e.tagName)+'|'+i),v=s[k]; if(!v)return; if('c'in v)e.checked=v.c;else if('v'in v)e.value=v.v;});}"
+    if old_controls not in doc or old_restore not in doc:
+        raise RuntimeError('live-refresh control contract changed')
+    return doc.replace(old_controls,new_controls,1).replace(old_restore,new_restore,1)
