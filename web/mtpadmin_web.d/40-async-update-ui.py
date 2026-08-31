@@ -50,6 +50,12 @@ _au_post_prev = Handler.do_POST
 def _au_do_POST(self):
     path=urllib.parse.urlsplit(self.path).path
     prefix='/action/component-update/'
+    # A stale pre-0.11.12 tab may still submit the old generic form. Never let
+    # that request reach the legacy field-based handler; force a page reload.
+    if path=='/action/component-update':
+        if not self.require_user(): return
+        self.send_html('Обновите страницу',"<div class='card'><h1>Форма обновления устарела</h1><p>Обновите страницу «Операции» и повторите действие. Компонент не запускался.</p><p><a class='btn' href='/operations'>Открыть Update Center</a></p></div>",'operations',409)
+        return
     if not path.startswith(prefix):
         return _au_post_prev(self)
     if not self.require_user(): return
