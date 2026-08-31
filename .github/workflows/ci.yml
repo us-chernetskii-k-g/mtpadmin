@@ -40,6 +40,10 @@ jobs:
           grep -q "BASE_01111_COMMIT='2805deea1364556677a352dcefeb049ae0ed6a48'" update.sh
           grep -q 'webproxy_telemetry_install.sh' update.sh
           grep -q 'WEBTELEMETRY=' scripts/component_update.sh
+          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
+          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' web-install.sh
+          grep -q '\$ROOT/\$RELEASE_REF/web-install.sh' install.sh
+          grep -q '\$ROOT/\$RELEASE_REF/update.sh' web-install.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -66,7 +70,7 @@ jobs:
       - name: Update Center routing and live-refresh regression
         run: |
           python3 - <<'PY'
-          import importlib.util,re
+          import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           w._o_update_status=lambda:{'components':{
               'mtpadmin':{'current':'0.11.11','latest':'0.11.12','available':True},
@@ -74,29 +78,31 @@ jobs:
               'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}},'checked_at':1,'updates':1}
           w._o_component_status=lambda:{}
           html=w._o_update_center('csrf-token')
-          assert "type='hidden' name='component'" not in html
+          assert "name='component'" not in html
           for comp in ('mtpadmin','telemt','webproxy'):
-              assert f"name='component' value='{comp}'" in html,comp
+              assert f"action='/action/component-update/{comp}'" in html,comp
               assert f"data-component='{comp}'" in html,comp
           doc=w.page_template('T','<input type="hidden" name="component" value="mtpadmin"><input name="q" value="abc">','admin')
           assert doc.count('input:not([type=hidden])')>=2
           assert "root.querySelectorAll('input,select,textarea')" not in doc
 
-          calls=[]; redirects=[]
+          calls=[]; redirects=[]; responses=[]
           w.csrf_ok=lambda user,token: True
           def fake_run(args,timeout=10): calls.append(list(args)); return 0,'job'
           w.run=fake_run
           class Fake:
-              path='/action/component-update'
               def require_user(self): return True
               def user(self): return 'admin'
-              def form(self): return {'csrf':'x','component':self.component}
+              def form(self): return {'csrf':'x'}
               def redirect(self,where,msg=''): redirects.append((where,msg))
-              def send_html(self,*a,**k): raise AssertionError(('unexpected send_html',a,k))
+              def send_html(self,*a,**k): responses.append((a,k))
           for comp in ('mtpadmin','telemt','webproxy'):
-              f=Fake(); f.component=comp; w._o_do_POST(f)
+              f=Fake(); f.path='/action/component-update/'+comp; w._au_do_POST(f)
               assert calls[-1]==[w._O_COMPONENT,'dispatch',comp],calls[-1]
               assert comp in redirects[-1][1]
+          before=len(calls); stale=Fake(); stale.path='/action/component-update'; w._au_do_POST(stale)
+          assert len(calls)==before
+          assert responses and responses[-1][0][3]==409,responses[-1]
           assert [x[-1] for x in calls[-3:]]==['mtpadmin','telemt','webproxy']
           print('Update Center routing PASS')
           PY
@@ -180,8 +186,9 @@ jobs:
           grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
           grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
           grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q "name='component' value='" web/mtpadmin_web.d/40-async-update-ui.py
-          ! grep -q "type='hidden' name='component'" web/mtpadmin_web.d/40-async-update-ui.py
+          for comp in mtpadmin telemt webproxy; do grep -q "/action/component-update/$comp" web/mtpadmin_web.d/40-async-update-ui.py; done
+          grep -q "path=='/action/component-update'" web/mtpadmin_web.d/40-async-update-ui.py
+          ! grep -q "name='component'" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Seamless updater transformation
         run: |
