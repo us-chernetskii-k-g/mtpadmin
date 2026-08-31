@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.11'
+VERSION='0.11.13'
 PATCH_LEVEL='mtpadmin-client-telemetry-v1'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 TPROXY_MARKER='/usr/local/lib/mtpadmin/tproxy-server.commit'
@@ -12,6 +12,7 @@ TPROXY_CFG='/etc/tproxy-server/config.json'
 TPROXY_PROFILES='/etc/tproxy-server/profiles.json'
 BINARY='/usr/local/bin/tproxy-server'
 ADMIN='http://127.0.0.1:8081'
+MIN_BUILD_FREE_KB=${MTPADMIN_TPROXY_BUILD_MIN_FREE_KB:-786432}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 chmod 0755 "$TMP"
@@ -43,9 +44,6 @@ manager=Path(sys.argv[1]); server=Path(sys.argv[2])
 ms=manager.read_text(encoding='utf-8')
 ss=server.read_text(encoding='utf-8')
 
-# The relay already keeps active session counts per client IP in memory for
-# rate limiting. Expose only that existing in-memory state on the loopback
-# admin listener; do not log requests, tokens, capabilities or query strings.
 if 'type MTPAdminActiveClient struct' not in ms:
     marker='type Manager struct {\n'
     if ms.count(marker)!=1:
@@ -84,9 +82,6 @@ PY
   grep -q '/mtpadmin/clients' "$src/internal/server/server.go" || die 'Telemetry admin endpoint patch не применился.'
 }
 
-# CI/developer mode: patch an already checked-out upstream tree and stop before
-# any root/systemd/runtime work. This is used to compile-test the exact patch
-# logic against the pinned upstream commit.
 if [[ -n "${MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE:-}" ]]; then
   resolve_go
   patch_source "$MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"
@@ -104,8 +99,70 @@ validate_endpoint(){
   curl -fsS --max-time 3 "$ADMIN/mtpadmin/clients" | python3 -c 'import ipaddress,json,sys; d=json.load(sys.stdin); rows=d.get("clients"); assert isinstance(rows,list); [ipaddress.ip_address(str(x.get("ip"))) for x in rows]; assert all(isinstance(x.get("sessions"),int) and x.get("sessions")>0 for x in rows)' >/dev/null 2>&1
 }
 
+wait_endpoint(){
+  local i
+  for i in {1..20}; do
+    if curl -fsS --max-time 2 "$ADMIN/readyz" >/dev/null 2>&1 && validate_endpoint; then return 0; fi
+    systemctl is-failed --quiet tproxy-server.service && return 1
+    sleep 1
+  done
+  return 1
+}
+
+write_marker(){
+  printf '%s\n' "$expected_marker" > "$PATCH_MARKER"
+  chmod 0644 "$PATCH_MARKER"
+}
+
+binary_has_telemetry(){
+  local candidate="$1"
+  [[ -f "$candidate" ]] && grep -aFq '/mtpadmin/clients' "$candidate" 2>/dev/null
+}
+
+# Fast path: do not rebuild a relay that already exposes the required endpoint.
 if [[ "$(cat "$PATCH_MARKER" 2>/dev/null || true)" == "$expected_marker" ]] && validate_endpoint; then
   ok "WEB client telemetry уже установлена: ${commit:0:12} · $PATCH_LEVEL"
+  exit 0
+fi
+
+# A previous update may have left the patched binary on disk but lost/staled the
+# marker or service state. Restart and validate it before considering a rebuild.
+if binary_has_telemetry "$BINARY"; then
+  info 'Telemetry-код уже есть в текущем binary; проверяю его без пересборки...'
+  if systemctl restart tproxy-server.service >/dev/null 2>&1 && wait_endpoint; then
+    write_marker
+    ok "WEB client telemetry восстановлена без сборки: ${commit:0:12} · $PATCH_LEVEL"
+    exit 0
+  fi
+fi
+
+# webproxy_install.sh keeps timestamped copies of the previous relay. Reuse the
+# newest patched copy for the same pinned commit when available. This makes
+# upgrades recoverable even on small VPSes without invoking Go at all.
+restore_patched_backup(){
+  local candidate rescue restored=0
+  [[ -d /var/backups/mtpadmin ]] || return 1
+  rescue="$TMP/tproxy-current.rescue"
+  cp -a "$BINARY" "$rescue"
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    binary_has_telemetry "$candidate" || continue
+    "$candidate" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null 2>&1 || continue
+    info "Нашёл готовый telemetry binary в backup: $(basename "$candidate")"
+    install -m 0755 -o root -g root "$candidate" "$BINARY"
+    if systemctl restart tproxy-server.service >/dev/null 2>&1 && wait_endpoint; then
+      write_marker
+      restored=1
+      break
+    fi
+    install -m 0755 -o root -g root "$rescue" "$BINARY"
+    systemctl restart tproxy-server.service >/dev/null 2>&1 || true
+  done < <(find /var/backups/mtpadmin -maxdepth 1 -type f -name "tproxy-server-before-${commit:0:12}-*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | cut -d' ' -f2-)
+  (( restored == 1 ))
+}
+
+if restore_patched_backup; then
+  ok "WEB client telemetry восстановлена из backup без Go build: ${commit:0:12} · $PATCH_LEVEL"
   exit 0
 fi
 
@@ -113,8 +170,19 @@ command -v git >/dev/null 2>&1 || die 'git не найден.'
 id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'
 resolve_go
 
+# Production builds do not run `go test ./...`: the exact patch is already
+# compiled and tested in GitHub CI. On the server we only build one binary,
+# validate production config, then perform READY + endpoint checks. This cuts
+# peak temporary disk usage substantially.
+free_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}')
+[[ "$free_kb" =~ ^[0-9]+$ ]] || die 'Не удалось определить свободное место для Go build.'
+if (( free_kb < MIN_BUILD_FREE_KB )); then
+  die "Недостаточно места для безопасной сборки WEB telemetry: свободно $((free_kb/1024)) MB, требуется не менее $((MIN_BUILD_FREE_KB/1024)) MB. Текущий relay оставлен без изменений."
+fi
+
 src="$TMP/tproxy-server"
 buildhome="$TMP/buildhome"
+gotmp="$buildhome/gotmp"
 git init -q "$src"
 git -C "$src" remote add origin "$TPROXY_REPO"
 git -C "$src" fetch -q --depth=1 origin "$commit"
@@ -122,11 +190,10 @@ git -C "$src" checkout -q --detach FETCH_HEAD
 [[ "$(git -C "$src" rev-parse HEAD)" == "$commit" ]] || die 'Не удалось получить установленный upstream commit.'
 patch_source "$src"
 
-install -d -o tproxy -g tproxy -m 0700 "$buildhome"
-chown -R tproxy:tproxy "$src"
-info "Собираю tproxy-server ${commit:0:12} + WEB client telemetry..."
-(cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 sh -c 'umask 022; exec "$@"' sh "$go_binary" test -p=1 ./...)
-(cd "$src" && runuser -u tproxy -- env HOME="$buildhome" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 sh -c 'umask 022; exec "$@"' sh "$go_binary" build -p=1 -trimpath -ldflags='-s -w' -o "$buildhome/tproxy-server.bin" ./cmd/tproxy-server)
+install -d -o tproxy -g tproxy -m 0700 "$buildhome" "$gotmp"
+chown -R tproxy:tproxy "$src" "$buildhome"
+info "Собираю tproxy-server ${commit:0:12} + WEB client telemetry (disk-safe mode)..."
+(cd "$src" && runuser -u tproxy -- env HOME="$buildhome" TMPDIR="$gotmp" GOTMPDIR="$gotmp" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 GOTOOLCHAIN=local sh -c 'umask 022; exec "$@"' sh "$go_binary" build -p=1 -trimpath -ldflags='-s -w' -o "$buildhome/tproxy-server.bin" ./cmd/tproxy-server)
 chmod 0755 "$buildhome/tproxy-server.bin"
 "$buildhome/tproxy-server.bin" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null || die 'Telemetry build не принял production config.'
 
@@ -141,14 +208,7 @@ rollback(){
 
 install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"
 if ! systemctl restart tproxy-server.service; then rollback; die 'Не удалось запустить telemetry relay.'; fi
-ready=0
-for _ in {1..20}; do
-  if curl -fsS --max-time 2 "$ADMIN/readyz" >/dev/null 2>&1 && validate_endpoint; then ready=1; break; fi
-  systemctl is-failed --quiet tproxy-server.service && break
-  sleep 1
-done
-if (( ready == 0 )); then rollback; die 'Telemetry endpoint не вышел в READY.'; fi
+if ! wait_endpoint; then rollback; die 'Telemetry endpoint не вышел в READY.'; fi
 
-printf '%s\n' "$expected_marker" > "$PATCH_MARKER"
-chmod 0644 "$PATCH_MARKER"
+write_marker
 ok "WEB client telemetry READY: /mtpadmin/clients · ${commit:0:12} · $PATCH_LEVEL"
