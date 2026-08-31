@@ -1,4 +1,6 @@
-# MTPADMIN 0.11.6 asynchronous Update Center presentation.
+# MTPADMIN 0.11.12 asynchronous Update Center presentation.
+# The component is carried by the clicked submit button, not by a repeated
+# hidden input. This makes the action immune to live-refresh form restoration.
 
 def _o_update_center(csrf):
     data=_o_update_status(); comps=data.get('components') or {}; rows=[]
@@ -20,10 +22,9 @@ def _o_update_center(csrf):
             status='<span class="warn"><b>Доступно обновление</b></span>' if available else ('<span class="ok">Актуально</span>' if latest!='—' else '<span class="muted">Нет данных</span>')
             verb='Обновить' if available else 'Проверить / переустановить'
             cls='warnbtn' if available else 'secondary'
-            button=(f"<form class='inline' method='post' action='/action/component-update'>"
+            button=(f"<form class='inline component-update-form' method='post' action='/action/component-update' data-component='{esc(key)}'>"
                     f"<input type='hidden' name='csrf' value='{esc(csrf)}'>"
-                    f"<input type='hidden' name='component' value='{key}'>"
-                    f"<button class='{cls}'>{verb} {esc(label)}</button></form>")
+                    f"<button class='{cls}' type='submit' name='component' value='{esc(key)}'>{verb} {esc(label)}</button></form>")
         rows.append([esc(label),esc(cur),esc(latest),status,button])
     checked=data.get('checked_at'); checked_txt=dt.datetime.fromtimestamp(int(checked)).strftime('%Y-%m-%d %H:%M:%S') if checked else 'ещё не проверялось'
     op_html=''
