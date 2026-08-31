@@ -93,7 +93,8 @@ jobs:
           grep -q '_st_restart_telemt()' web/mtpadmin_web.d/42-stability.py
           grep -q "Runtime TeleMT не подтвердил изменение источника" web/mtpadmin_web.d/42-stability.py
           grep -q 'shutil.copy2(backup,CFG)' web/mtpadmin_web.d/42-stability.py
-          grep -q 'apply_source_runtime' src/mtpadmin.d/11-source-stability.sh
+          grep -q 'source_apply_or_restart' src/mtpadmin.d/11-source-stability.sh
+          grep -q 'source_full_restart' src/mtpadmin.d/11-source-stability.sh
 
       - name: WEB Proxy production contracts
         run: |
