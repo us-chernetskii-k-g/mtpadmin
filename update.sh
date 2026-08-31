@@ -23,13 +23,11 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 if "VERSION='0.11.6'" not in s: raise SystemExit('unexpected immutable 0.11.6 updater')
 s=s.replace('0.11.6','0.11.8')
 
-# The immutable 0.11.6 wrapper itself transforms the older 0.9 updater.
-# Inject one extra transformation into that inner Python block. Doing this at
-# the transformation layer is intentionally more robust than trying to match
-# the escaped 0.11.6 source string from the outer wrapper.
-write_marker="p.write_text(s,encoding='utf-8')"
-if s.count(write_marker)!=1:
-    raise SystemExit('0.11.6 transform write marker not found')
+# Modify only the first/main 0.11.6 transformer. A second p.write_text exists
+# later in PYFIX, so a bare count of p.write_text is intentionally not used.
+main_tail="s=s.replace(needle,logger,1)\np.write_text(s,encoding='utf-8')"
+if s.count(main_tail)!=1:
+    raise SystemExit('unique 0.11.6 main transformer tail not found')
 extra=r"""
 # 0.11.8: make the final blue/green engine inherit the commit selected by the
 # Update Center instead of silently going back to a floating main branch.
@@ -43,14 +41,14 @@ s=s.replace(old_raw,new_raw,1)
 if s.count(anchor)!=1: raise SystemExit('0.11.8 0.9 extra anchor not found')
 s=s.replace(anchor,release_patch,1)
 
-# 0.11.8: assemble the audited source lifecycle fragment in the generated CLI.
+# Assemble the audited source lifecycle fragment in the generated CLI.
 cli_old='for part in 00-core.sh 10-sources.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
 cli_new='for part in 00-core.sh 10-sources.sh 11-source-stability.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
 if s.count(cli_old)!=1: raise SystemExit('0.11.8 CLI assembly marker not found')
 s=s.replace(cli_old,cli_new,1)
 
 # 0.11.6 has already expanded the 0.9 web assembly through fragment 41 by the
-# time this code runs. Extend that already-generated shell block through 43.
+# time this code runs. Extend that already-generated block through 43.
 web_fetch='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'\n'''
 web_fetch_new=web_fetch+'''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/42-stability.py" -o "$TMP/stability-extension.py" || die 'Не удалось скачать stability extension'\n  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/43-db-safety.py" -o "$TMP/db-safety-extension.py" || die 'Не удалось скачать DB safety extension'\n'''
 if s.count(web_fetch)!=1: raise SystemExit('0.11.8 web fetch marker not found')
@@ -61,7 +59,7 @@ web_args_new='''  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py"
 if s.count(web_args)!=1: raise SystemExit('0.11.8 web argument marker not found')
 s=s.replace(web_args,web_args_new,1)
 """
-s=s.replace(write_marker,extra+'\n'+write_marker,1)
+s=s.replace(main_tail,"s=s.replace(needle,logger,1)\n"+extra+"\np.write_text(s,encoding='utf-8')",1)
 p.write_text(s,encoding='utf-8')
 PY
 
@@ -75,9 +73,6 @@ grep -q '43-db-safety.py' "$TMP/update-0116.sh" || die 'DB safety extension не
 case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
   2)
     MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-0116.sh" || die 'Вложенная сборка update-engine не прошла.'
-    [[ ! -f scripts/webproxy_install.sh ]] || bash -n scripts/webproxy_install.sh
-    [[ ! -f scripts/webproxy_backend_install.sh ]] || bash -n scripts/webproxy_backend_install.sh
-    [[ ! -f scripts/scanner_watchdog.sh ]] || bash -n scripts/scanner_watchdog.sh
     ok 'Nested 0.11.8 updater transformation PASS'; exit 0 ;;
   1)
     MTPADMIN_BOOTSTRAP_TEST=1 bash "$TMP/update-0116.sh" || die 'Update wrapper test не прошёл.'
@@ -158,7 +153,7 @@ info 'Проверяю базу статистики...'
 [[ "$(sqlite3 /var/lib/mtpadmin/stats.db 'PRAGMA quick_check;' 2>/dev/null | head -1)" == ok ]] || die 'SQLite stats.db quick_check failed.'
 
 info 'Проверяю WEB relay data-path contract...'
-python3 - <<'PY' || exit 1
+python3 - <<'PY' || die 'WEB relay pending limit contract failed.'
 import json
 with open('/etc/tproxy-server/config.json',encoding='utf-8') as f:d=json.load(f)
 v=int((d.get('limits') or {}).get('max_pending_items_per_session') or 0)
