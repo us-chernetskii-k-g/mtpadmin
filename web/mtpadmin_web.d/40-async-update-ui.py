@@ -1,6 +1,7 @@
 # MTPADMIN 0.11.12 asynchronous Update Center presentation.
-# The component is carried by the clicked submit button, not by a repeated
-# hidden input. This makes the action immune to live-refresh form restoration.
+# Each component has its own POST route. The component is no longer taken from
+# mutable form fields, so live refresh or browser autofill cannot redirect an
+# MTPADMIN update into TeleMT/WEB Proxy (or vice versa).
 
 def _o_update_center(csrf):
     data=_o_update_status(); comps=data.get('components') or {}; rows=[]
@@ -22,9 +23,9 @@ def _o_update_center(csrf):
             status='<span class="warn"><b>Доступно обновление</b></span>' if available else ('<span class="ok">Актуально</span>' if latest!='—' else '<span class="muted">Нет данных</span>')
             verb='Обновить' if available else 'Проверить / переустановить'
             cls='warnbtn' if available else 'secondary'
-            button=(f"<form class='inline component-update-form' method='post' action='/action/component-update' data-component='{esc(key)}'>"
+            button=(f"<form class='inline component-update-form' method='post' action='/action/component-update/{esc(key)}' data-component='{esc(key)}'>"
                     f"<input type='hidden' name='csrf' value='{esc(csrf)}'>"
-                    f"<button class='{cls}' type='submit' name='component' value='{esc(key)}'>{verb} {esc(label)}</button></form>")
+                    f"<button class='{cls}' type='submit'>{verb} {esc(label)}</button></form>")
         rows.append([esc(label),esc(cur),esc(latest),status,button])
     checked=data.get('checked_at'); checked_txt=dt.datetime.fromtimestamp(int(checked)).strftime('%Y-%m-%d %H:%M:%S') if checked else 'ещё не проверялось'
     op_html=''
@@ -39,6 +40,33 @@ def _o_update_center(csrf):
     return (f"<div class='card'><div class='a-head'><div><h2>Update Center</h2><div class='muted'>Последняя проверка: {esc(checked_txt)}</div></div>{checkform}</div>"
             f"{table(['Компонент','Установлено','Доступно','Статус','Действие'],rows)}{op_html}"
             "<div class='muted' style='margin-top:10px'>Одновременно выполняется только одна операция. Можно уйти со страницы: системная задача продолжится сама. TeleMT использует backup/rollback, MTPADMIN — blue/green.</div></div>")
+
+
+# Route-safe component update handler. The component comes exclusively from the
+# URL path generated above; POST body contains only CSRF. This intentionally
+# overrides the older generic /action/component-update handler from 38-operations.
+_au_post_prev = Handler.do_POST
+
+def _au_do_POST(self):
+    path=urllib.parse.urlsplit(self.path).path
+    prefix='/action/component-update/'
+    if not path.startswith(prefix):
+        return _au_post_prev(self)
+    if not self.require_user(): return
+    try:
+        comp=path[len(prefix):]
+        if comp not in ('mtpadmin','telemt','webproxy') or '/' in comp:
+            raise ValueError('Неизвестный компонент')
+        f=self.form()
+        if not csrf_ok(self.user(),f.get('csrf','')):
+            self.send_html('CSRF','<div class="card"><h1>Запрос отклонён</h1></div>','operations',403); return
+        rc,out=run([_O_COMPONENT,'dispatch',comp],timeout=10)
+        if rc: raise RuntimeError(out or 'Не удалось запустить обновление')
+        self.redirect('/operations',f'Обновление {comp} запущено в фоне')
+    except Exception as e:
+        self.send_html('Ошибка действия',f'<div class="card"><h1>Действие не выполнено</h1><pre>{esc(type(e).__name__+": "+str(e))}</pre><p><a class="btn secondary" href="/operations">Назад</a></p></div>','operations',400)
+
+Handler.do_POST=_au_do_POST
 
 
 # Global live-refresh safety. Hidden fields are server-authored action data
