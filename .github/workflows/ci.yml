@@ -186,9 +186,9 @@ jobs:
           grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
           grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
           grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
-          for comp in mtpadmin telemt webproxy; do grep -q "/action/component-update/$comp" web/mtpadmin_web.d/40-async-update-ui.py; done
-          grep -q "path=='/action/component-update'" web/mtpadmin_web.d/40-async-update-ui.py
-          ! grep -q "name='component'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "action='/action/component-update/{esc(key)}'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "prefix='/action/component-update/'" web/mtpadmin_web.d/40-async-update-ui.py
+          grep -Fq "if path=='/action/component-update':" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Seamless updater transformation
         run: |
