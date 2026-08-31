@@ -56,7 +56,10 @@ def _wpa_clients():
                 continue
             if sessions>0:
                 out.append({'ip':ip,'sessions':sessions})
-        out.sort(key=lambda x:ipaddress.ip_address(x['ip']))
+        def sort_key(row):
+            addr=ipaddress.ip_address(row['ip'])
+            return (addr.version,int(addr))
+        out.sort(key=sort_key)
         return out
     except Exception:
         return []
