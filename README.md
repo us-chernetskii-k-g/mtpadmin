@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/up
 
 **Безопасность** — Scanner Guard, Risk Score, whitelist и ручные блокировки.
 
-**Update Center** — проверка и обновление MTPADMIN, TeleMT и Telegram WEB Proxy прямо из браузера. Операция продолжает работать даже если закрыть вкладку.
+**Update Center** — проверка и обновление MTPADMIN, TeleMT и Telegram WEB Proxy прямо из браузера. Операция продолжает работать даже если закрыть вкладку. Компонент обновления передаётся значением именно нажатой кнопки и не может быть подменён фоновым live-refresh страницы.
 
 **Диагностика** — `doctor` проверяет сервисы, API, DNS, память, swap, диск, WEB Proxy и другие ключевые части системы.
 
@@ -153,6 +153,6 @@ mtpadmin doctor
 
 ## Текущая версия
 
-**0.11.11** — WEB Proxy теперь участвует в общей live-статистике на уровне клиентов: активные WEB IP, GeoIP/ASN, история по общей retention-политике и автоматическое восстановление telemetry при установке, обновлении WEB Proxy или смене hostname. Update Center остаётся основным способом обновления установленной системы.
+**0.11.12** — исправлена маршрутизация Update Center: live-refresh больше не переписывает hidden-поля форм, а MTPADMIN/TeleMT/WEB Proxy запускаются только значением реально нажатой кнопки. Сохранены WEB client IP/GeoIP telemetry, source lifecycle, persistent stats, blue/green и repair-проверки установщиков.
 
 Issues и Pull Requests приветствуются.
