@@ -44,10 +44,13 @@ jobs:
           bash -n scripts/webproxy_install.sh
           bash -n scripts/webproxy_backend_install.sh
           bash -n scripts/component_update.sh
+          bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py
           grep -q '11-source-stability.sh' update.sh
           grep -q '42-stability.py' update.sh
           grep -q '43-db-safety.py' update.sh
+          grep -q 'scanner_watchdog.sh' update.sh
+          grep -q 'mtpadmin-scanner-watchdog.timer' update.sh
 
       - name: Update checker semantics
         run: |
@@ -98,6 +101,13 @@ jobs:
           grep -q 'systemd-run --quiet --no-block --collect' scripts/component_update.sh
           grep -q 'flock -n 9' scripts/component_update.sh
           grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
+
+      - name: Scanner Guard self-heal contract
+        run: |
+          set -euo pipefail
+          grep -q 'MAX_AGE=.*120' scripts/scanner_watchdog.sh
+          grep -q 'systemctl restart "$SCANNER"' scripts/scanner_watchdog.sh
+          grep -q 'systemctl enable --now mtpadmin-scanner-watchdog.timer' update.sh
 
       - name: Seamless updater transformation
         run: |
