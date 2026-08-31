@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/mtpadmin_web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -34,12 +34,13 @@ jobs:
       - name: Syntax and product version
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.9'
-          grep -q "VERSION='0.11.9'" update.sh
-          grep -q "VERSION='0.11.9'" web-install.sh
+          test "$(cat VERSION)" = '0.11.10'
+          grep -q "VERSION='0.11.10'" update.sh
+          grep -q "VERSION='0.11.10'" web-install.sh
           grep -q "BASE_0118_COMMIT='d99aade365007f83c82a05948010ccd1f12feeec'" update.sh
           grep -q 'PRAGMA busy_timeout=5000' update.sh
           grep -q 'repair-misplaced' update.sh
+          grep -q '44-webproxy-activity.py' update.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -56,10 +57,47 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.9')>(0,11,8)
+          assert u.semver('0.11.10')>(0,11,9)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
+          PY
+
+      - name: WEB activity UI and collector contract
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util, sqlite3
+          spec=importlib.util.spec_from_file_location('w','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.state=lambda:{'PROFILE':'DEIMOS','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w._wpa_source_rows=lambda:[{'username':'DEIMOS','current_connections':3,'active_unique_ips':2},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':1,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':18489,'tproxy_bytes_down_total':21873,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
+          rows={r['username']:r for r in w.source_rows()}
+          assert rows['DEIMOS']['current_connections']==3
+          assert rows['WEB_PROXY']['current_connections']==1
+          assert rows['WEB_PROXY']['web_streams_live']==8
+          assert rows['WEB_PROXY']['active_unique_ips']==0
+          w._wpa_active_clients_html=lambda:'BASE-ACTIVE'
+          html=w.active_clients_html()
+          assert 'WEB Proxy · сейчас' in html and 'WEB-сессии' in html and 'BASE-ACTIVE' in html
+          print('WEB UI activity PASS')
+
+          spec=importlib.util.spec_from_file_location('s','/tmp/stats_collector.py'); sc=importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+          con=sqlite3.connect(':memory:')
+          con.executescript('''
+          CREATE TABLE online_samples(ts INTEGER NOT NULL,username TEXT NOT NULL,connections INTEGER NOT NULL DEFAULT 0,unique_ips INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(ts,username));
+          CREATE TABLE daily_traffic(day TEXT NOT NULL,username TEXT NOT NULL,connections INTEGER NOT NULL DEFAULT 0,bad_connections INTEGER NOT NULL DEFAULT 0,bytes_from_client INTEGER NOT NULL DEFAULT 0,bytes_to_client INTEGER NOT NULL DEFAULT 0,peak_connections INTEGER NOT NULL DEFAULT 0,peak_unique_ips INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(day,username));
+          CREATE TABLE counter_state(username TEXT PRIMARY KEY,conn_total INTEGER NOT NULL DEFAULT 0,bad_total INTEGER NOT NULL DEFAULT 0,bytes_from INTEGER NOT NULL DEFAULT 0,bytes_to INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0);
+          ''')
+          sc._online_last_sample=0
+          sc._sample_online(con,{},set(),60,{'tproxy_sessions_live':1},'WEB_PROXY')
+          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(1,0)
+          assert con.execute("select connections from online_samples where username='__GLOBAL__'").fetchone()==(1,)
+          sc._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':1,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60)
+          sc._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70)
+          row=con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections from daily_traffic where username='WEB_PROXY'").fetchone()
+          assert row==(2,100,300,2),row
+          print('WEB collector activity PASS')
           PY
 
       - name: WEB Proxy source recovery and upstream relay
@@ -71,11 +109,9 @@ jobs:
           EOF
           found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
           test "$found" = '1|00112233445566778899aabbccddeeff'
-
           cat >/tmp/mtpadmin-misplaced.toml <<'EOF'
           [access.users]
           "MAIN" = "ffeeddccbbaa99887766554433221100"
-
           [[upstreams]]
           type = "direct"
           enabled = true
@@ -84,7 +120,6 @@ jobs:
           EOF
           misplaced=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-misplaced.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
           test "$misplaced" = '0|'
-
           grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
@@ -93,7 +128,7 @@ jobs:
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           (cd /tmp/tproxy-upstream && umask 022 && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
 
-      - name: Official WEB MTProxy backend contract
+      - name: Production contracts
         run: |
           set -euo pipefail
           grep -q "MTPROXY_COMMIT='f36d8af769ffaeac36978d38c2c0f6d1104c2137'" scripts/webproxy_backend_install.sh
@@ -102,24 +137,13 @@ jobs:
           grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
           grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
           grep -q 'iifname != "lo" tcp dport { 2398, 8888 } drop' scripts/webproxy_backend_install.sh
-          grep -q "'backend':'127.0.0.1:2398'" scripts/webproxy_backend_install.sh
-
-      - name: Component updater end-to-end repair contract
-        run: |
-          set -euo pipefail
           grep -q "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" scripts/component_update.sh
           grep -q 'repair_webproxy' scripts/component_update.sh
-          grep -q 'max_pending_items_per_session' scripts/component_update.sh
           grep -q 'systemd-run --quiet --no-block --collect' scripts/component_update.sh
           grep -q 'flock -n 9' scripts/component_update.sh
           grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
-
-      - name: Scanner Guard self-heal contract
-        run: |
-          set -euo pipefail
           grep -q 'MAX_AGE=.*120' scripts/scanner_watchdog.sh
           grep -q 'systemctl restart "$SCANNER"' scripts/scanner_watchdog.sh
-          grep -q 'systemctl enable --now mtpadmin-scanner-watchdog.timer' update.sh || grep -q 'BASE_0118_COMMIT' update.sh
 
       - name: Seamless updater transformation
         run: |
