@@ -53,16 +53,7 @@ install -m 0700 -o root -g root "$TMP/webproxy_telemetry_install.sh" /usr/local/
 bash /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh
 
 info 'Проверяю WEB client telemetry contract...'
-curl -fsS --max-time 3 http://127.0.0.1:8081/mtpadmin/clients | python3 - <<'PY' || die 'WEB client telemetry endpoint invalid.'
-import ipaddress,json,sys
-obj=json.load(sys.stdin)
-rows=obj.get('clients')
-assert isinstance(rows,list)
-for row in rows:
-    assert set(row).issubset({'ip','sessions'}), row
-    ipaddress.ip_address(str(row.get('ip')))
-    assert isinstance(row.get('sessions'),int) and row['sessions']>0
-PY
+curl -fsS --max-time 3 http://127.0.0.1:8081/mtpadmin/clients | python3 -c 'import ipaddress,json,sys; obj=json.load(sys.stdin); rows=obj.get("clients"); assert isinstance(rows,list); [(ipaddress.ip_address(str(row.get("ip"))), isinstance(row.get("sessions"),int) and row.get("sessions")>0, set(row).issubset({"ip","sessions"})) for row in rows]; assert all(isinstance(row.get("sessions"),int) and row.get("sessions")>0 and set(row).issubset({"ip","sessions"}) for row in rows)' >/dev/null || die 'WEB client telemetry endpoint invalid.'
 
 # The new collector tolerates the endpoint being absent during blue/green
 # deployment; once telemetry is live it will pick up WEB clients on the next
