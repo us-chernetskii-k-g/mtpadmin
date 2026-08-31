@@ -72,6 +72,48 @@ jobs:
           print('Source edit PASS')
           PY
 
+      - name: TOML array boundary and migration regression
+        run: |
+          set -euo pipefail
+          cat >/tmp/source-boundary.toml <<'EOF'
+          [access.users]
+          "MAIN" = "00112233445566778899aabbccddeeff"
+
+          [[upstreams]]
+          type = "direct"
+          enabled = true
+          weight = 10
+          EOF
+          MTPADMIN_CONFIG=/tmp/source-boundary.toml python3 src/user_config.py add AD_01 --secret 11111111111111111111111111111111 >/dev/null
+          python3 - <<'PY'
+          import tomllib
+          with open('/tmp/source-boundary.toml','rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['AD_01']=='11111111111111111111111111111111'
+          assert 'AD_01' not in d['upstreams'][0]
+          PY
+
+          cat >/tmp/source-repair.toml <<'EOF'
+          [access.users]
+          "MAIN" = "00112233445566778899aabbccddeeff"
+
+          [[upstreams]]
+          type = "direct"
+          enabled = true
+          weight = 10
+          "WEB_PROXY" = "22222222222222222222222222222222"
+          "AD_02" = "33333333333333333333333333333333"
+          EOF
+          out=$(MTPADMIN_CONFIG=/tmp/source-repair.toml python3 src/user_config.py repair-misplaced)
+          test "$(printf '%s\n' "$out" | head -1)" = 2
+          python3 - <<'PY'
+          import tomllib
+          with open('/tmp/source-repair.toml','rb') as f:d=tomllib.load(f)
+          assert d['access']['users']['WEB_PROXY']=='22222222222222222222222222222222'
+          assert d['access']['users']['AD_02']=='33333333333333333333333333333333'
+          assert 'WEB_PROXY' not in d['upstreams'][0]
+          assert 'AD_02' not in d['upstreams'][0]
+          PY
+
       - name: Config and runtime merge contract
         run: |
           python3 - <<'PY'
@@ -135,7 +177,7 @@ jobs:
               except Exception: continue
               for m in re.finditer(r'(?i)(?:secret|password|token)\s*[=:]\s*["\x27]?([0-9a-f]{32,}|[A-Za-z0-9_-]{40,})',s):
                   value=m.group(1)
-                  if value.lower() not in {'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100'}:
+                  if value.lower() not in {'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100','11111111111111111111111111111111','22222222222222222222222222222222','33333333333333333333333333333333'}:
                       bad.append((str(p),value[:12]))
           assert not bad,bad
           print('Secret scan PASS')
