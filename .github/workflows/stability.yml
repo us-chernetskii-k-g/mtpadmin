@@ -34,9 +34,13 @@ jobs:
       - name: Syntax
         run: |
           set -euo pipefail
+          test "$(cat VERSION)" = '0.11.11'
           bash -n /tmp/mtpadmin
+          bash -n update.sh
+          bash -n web-install.sh
           bash -n scripts/webproxy_install.sh
           bash -n scripts/webproxy_backend_install.sh
+          bash -n scripts/webproxy_telemetry_install.sh
           bash -n scripts/component_update.sh
           bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
@@ -44,7 +48,7 @@ jobs:
       - name: SQLite FD regression
         run: |
           python3 - <<'PY'
-          import importlib.util, os, sqlite3, tempfile
+          import importlib.util,os,sqlite3,tempfile
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           fd,path=tempfile.mkstemp(); os.close(fd)
           c=sqlite3.connect(path); c.execute('create table t(x integer)'); c.execute('insert into t values(1)'); c.commit(); c.close()
@@ -52,7 +56,7 @@ jobs:
           before=len(os.listdir('/proc/self/fd'))
           for _ in range(500): assert w.scalar('select x from t')==1
           after=len(os.listdir('/proc/self/fd'))
-          assert after-before <= 3,(before,after)
+          assert after-before<=3,(before,after)
           print('FD regression PASS',before,after)
           PY
 
@@ -63,7 +67,7 @@ jobs:
           import importlib.util,tempfile,tomllib
           from pathlib import Path
           spec=importlib.util.spec_from_file_location('u','src/user_config.py'); u=importlib.util.module_from_spec(spec); spec.loader.exec_module(u)
-          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"DEMO" = "00112233445566778899aabbccddeeff"\n\n[[upstreams]]\ntype="direct"\nenabled=true\nweight=10\n')
+          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"DEMO"="00112233445566778899aabbccddeeff"\n\n[[upstreams]]\ntype="direct"\nenabled=true\nweight=10\n')
           u.CFG=p
           class A: pass
           a=A(); a.name='DEMO'; a.ad_tag='ffeeddccbbaa99887766554433221100'; a.max_conns='123'; a.max_ips='7'; u.edit(a)
@@ -78,7 +82,7 @@ jobs:
           print('Source/TOML regression PASS')
           PY
 
-      - name: Config runtime and WEB activity merge
+      - name: Config runtime and WEB client merge
         run: |
           python3 - <<'PY'
           import importlib.util,tempfile
@@ -86,32 +90,40 @@ jobs:
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"A"="00112233445566778899aabbccddeeff"\n"B"="ffeeddccbbaa99887766554433221100"\n"WEB_PROXY"="11111111111111111111111111111111"\n')
           w.CFG=str(p); w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
-          w.api_json=lambda path,**kw: [{'username':'A','enabled':True,'in_runtime':True,'user_ad_tag':None,'max_tcp_conns':None,'max_unique_ips':None,'links':{'classic':['tg://proxy?server=example.com&port=443&secret=00112233445566778899aabbccddeeff']}},{'username':'WEB_PROXY','enabled':True,'in_runtime':True,'current_connections':0,'active_unique_ips':0}] if path=='/v1/users' else {}
-          w._wpa_metrics=lambda:{'tproxy_sessions_live':1,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':100,'tproxy_bytes_down_total':200,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
+          w.api_json=lambda path,**kw: ([{'username':'A','enabled':True,'in_runtime':True,'current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','enabled':True,'in_runtime':True,'current_connections':0,'active_unique_ips':0}] if path=='/v1/users' else ([{'username':'A','active_ips':['203.0.113.7']}] if path=='/v1/stats/users/active-ips' else {}))
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':100,'tproxy_bytes_down_total':200,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
+          w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
+          w.query=lambda *a,**kw: []
           rows={x['username']:x for x in w.source_rows()}
           assert rows['A']['in_runtime'] is True and rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
-          assert rows['WEB_PROXY']['current_connections']==1 and rows['WEB_PROXY']['web_streams_live']==8 and rows['WEB_PROXY']['active_unique_ips']==0
+          assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2 and rows['WEB_PROXY']['web_streams_live']==8
           html=w.sources_html('tester','csrf'); assert 'CONFIG ONLY' in html and 'Настроить' in html
-          w._wpa_active_clients_html=lambda:'BASE'; active=w.active_clients_html(); assert 'WEB-сессии' in active and 'BASE' in active
-          print('Config/runtime/WEB merge PASS')
+          active=w.active_clients_html(); assert '198.51.100.10' in active and '2001:db8::10' in active and '203.0.113.7' in active and '● WEB' in active
+          print('Config/runtime/WEB client merge PASS')
           PY
 
-      - name: WEB collector history contract
+      - name: WEB collector active IP and history contract
         run: |
           python3 - <<'PY'
           import importlib.util,sqlite3
           spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
+          s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}
+          s._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}
+          s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
+          active=s.active_pairs(); assert len(active)==3
+          assert ('WEB_PROXY','198.51.100.10') in active and ('WEB_PROXY','2001:db8::10') in active
           con=sqlite3.connect(':memory:')
           con.executescript('''CREATE TABLE online_samples(ts INTEGER,username TEXT,connections INTEGER,unique_ips INTEGER,PRIMARY KEY(ts,username));
           CREATE TABLE daily_traffic(day TEXT,username TEXT,connections INTEGER DEFAULT 0,bad_connections INTEGER DEFAULT 0,bytes_from_client INTEGER DEFAULT 0,bytes_to_client INTEGER DEFAULT 0,peak_connections INTEGER DEFAULT 0,peak_unique_ips INTEGER DEFAULT 0,PRIMARY KEY(day,username));
           CREATE TABLE counter_state(username TEXT PRIMARY KEY,conn_total INTEGER DEFAULT 0,bad_total INTEGER DEFAULT 0,bytes_from INTEGER DEFAULT 0,bytes_to INTEGER DEFAULT 0,updated_at INTEGER DEFAULT 0);''')
           s._online_last_sample=0
-          s._sample_online(con,{},set(),60,{'tproxy_sessions_live':1},'WEB_PROXY')
-          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(1,0)
-          s._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':1,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60)
-          s._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70)
-          assert con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections from daily_traffic where username='WEB_PROXY'").fetchone()==(2,100,300,2)
-          print('WEB history PASS')
+          s._sample_online(con,{'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':1}},active,60,{'tproxy_sessions_live':3},'WEB_PROXY')
+          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(3,2)
+          assert con.execute("select connections,unique_ips from online_samples where username='__GLOBAL__'").fetchone()==(7,3)
+          s._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60,2)
+          s._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':3,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70,2)
+          assert con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections,peak_unique_ips from daily_traffic where username='WEB_PROXY'").fetchone()==(2,100,300,3,2)
+          print('WEB active/history PASS')
           PY
 
       - name: Source apply fallback contract
@@ -123,17 +135,20 @@ jobs:
           grep -q 'source_apply_or_restart' src/mtpadmin.d/11-source-stability.sh
           grep -q 'source_full_restart' src/mtpadmin.d/11-source-stability.sh
 
-      - name: WEB Proxy production contracts
+      - name: WEB telemetry and production contracts
         run: |
           set -euo pipefail
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
           grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
           grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
-          grep -q "WEBBACKEND='/usr/local/lib/mtpadmin/webproxy_backend_install.sh'" scripts/component_update.sh
-          grep -q 'repair_webproxy' scripts/component_update.sh
-          grep -q 'tproxy_sessions_live' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q '__WEB_COUNTER__:' src/stats_collector.d/15-online-history.py
+          grep -q 'PATCH_LEVEL=' scripts/webproxy_telemetry_install.sh
+          grep -q '/mtpadmin/clients' scripts/webproxy_telemetry_install.sh
+          grep -q 'sessionsPerIP' scripts/webproxy_telemetry_install.sh
+          grep -q "WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'" scripts/component_update.sh
+          grep -q 'bash "$WEBTELEMETRY"' scripts/component_update.sh
+          grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
+          grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
 
       - name: Scanner Guard self-heal contract
         run: |
@@ -147,9 +162,6 @@ jobs:
           set -euo pipefail
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q 'UQCjpkzF3YQKSXZUu7jxETBndx8qx6M21M4QtTKwi8_Ee2A1' README.md
-          grep -q 'TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR' README.md
-          grep -q '0xe93f304d4828c0dbc6667dd2761eb7b07e325ed4' README.md
           grep -q 'https://t.me/boss_of_this_vpn' scripts/webproxy_install.sh
 
       - name: Guard against accidental production secrets
