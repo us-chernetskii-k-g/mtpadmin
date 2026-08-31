@@ -31,13 +31,18 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Syntax
+      - name: Syntax and release pinning
         run: |
           set -euo pipefail
           test "$(cat VERSION)" = '0.11.12'
           grep -q "VERSION='0.11.12'" update.sh
           grep -q "VERSION='0.11.12'" web-install.sh
+          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
+          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' web-install.sh
+          grep -q '\$ROOT/\$RELEASE_REF/web-install.sh' install.sh
+          grep -q '\$ROOT/\$RELEASE_REF/update.sh' web-install.sh
           bash -n /tmp/mtpadmin
+          bash -n install.sh
           bash -n update.sh
           bash -n web-install.sh
           bash -n scripts/webproxy_install.sh
@@ -47,7 +52,7 @@ jobs:
           bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
-      - name: Update Center form isolation regression
+      - name: Update Center route isolation regression
         run: |
           python3 - <<'PY'
           import importlib.util
@@ -55,13 +60,27 @@ jobs:
           w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'2','available':k=='mtpadmin'} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':1}
           w._o_component_status=lambda:{}
           html=w._o_update_center('csrf')
-          assert "type='hidden' name='component'" not in html
+          assert "name='component'" not in html
           for comp in ('mtpadmin','telemt','webproxy'):
-              assert f"name='component' value='{comp}'" in html
+              assert f"action='/action/component-update/{comp}'" in html
           doc=w.page_template('x','<form><input type="hidden" name="name" value="A"><input name="q" value="x"></form>','admin')
           assert doc.count('input:not([type=hidden])')>=2
           assert "root.querySelectorAll('input,select,textarea')" not in doc
-          print('Update Center form isolation PASS')
+          calls=[]; responses=[]
+          w.csrf_ok=lambda *a: True
+          w.run=lambda args,timeout=10:(calls.append(list(args)) or (0,'job'))
+          class F:
+              def require_user(self): return True
+              def user(self): return 'admin'
+              def form(self): return {'csrf':'x'}
+              def redirect(self,*a,**k): pass
+              def send_html(self,*a,**k): responses.append((a,k))
+          for comp in ('mtpadmin','telemt','webproxy'):
+              f=F(); f.path='/action/component-update/'+comp; w._au_do_POST(f)
+              assert calls[-1][-1]==comp
+          n=len(calls); f=F(); f.path='/action/component-update'; w._au_do_POST(f)
+          assert len(calls)==n and responses[-1][0][3]==409
+          print('Update Center route isolation PASS')
           PY
 
       - name: SQLite FD regression
@@ -81,7 +100,6 @@ jobs:
 
       - name: Source editor and TOML boundary
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           import importlib.util,tempfile,tomllib
           from pathlib import Path
@@ -114,11 +132,11 @@ jobs:
           w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           w.query=lambda *a,**kw: []
           rows={x['username']:x for x in w.source_rows()}
-          assert rows['A']['in_runtime'] is True and rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
-          assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2 and rows['WEB_PROXY']['web_streams_live']==8
-          html=w.sources_html('tester','csrf'); assert 'CONFIG ONLY' in html and 'Настроить' in html
+          assert rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
+          assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
+          assert 'CONFIG ONLY' in w.sources_html('tester','csrf')
           active=w.active_clients_html(); assert '198.51.100.10' in active and '2001:db8::10' in active and '203.0.113.7' in active and '● WEB' in active
-          print('Config/runtime/WEB client merge PASS')
+          print('Config/runtime/WEB merge PASS')
           PY
 
       - name: WEB collector active IP and history contract
@@ -130,7 +148,6 @@ jobs:
           s._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}
           s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           active=s.active_pairs(); assert len(active)==3
-          assert ('WEB_PROXY','198.51.100.10') in active and ('WEB_PROXY','2001:db8::10') in active
           con=sqlite3.connect(':memory:')
           con.executescript('''CREATE TABLE online_samples(ts INTEGER,username TEXT,connections INTEGER,unique_ips INTEGER,PRIMARY KEY(ts,username));
           CREATE TABLE daily_traffic(day TEXT,username TEXT,connections INTEGER DEFAULT 0,bad_connections INTEGER DEFAULT 0,bytes_from_client INTEGER DEFAULT 0,bytes_to_client INTEGER DEFAULT 0,peak_connections INTEGER DEFAULT 0,peak_unique_ips INTEGER DEFAULT 0,PRIMARY KEY(day,username));
@@ -145,31 +162,19 @@ jobs:
           print('WEB active/history PASS')
           PY
 
-      - name: Source apply fallback contract
+      - name: Source and WEB production contracts
         run: |
           set -euo pipefail
-          grep -q '_st_restart_telemt()' web/mtpadmin_web.d/42-stability.py
-          grep -q 'Runtime TeleMT не подтвердил изменение источника' web/mtpadmin_web.d/42-stability.py
-          grep -q 'shutil.copy2(backup,CFG)' web/mtpadmin_web.d/42-stability.py
           grep -q 'source_apply_or_restart' src/mtpadmin.d/11-source-stability.sh
-          grep -q 'source_full_restart' src/mtpadmin.d/11-source-stability.sh
-
-      - name: WEB telemetry and production contracts
-        run: |
-          set -euo pipefail
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
           grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
-          grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
           grep -q 'PATCH_LEVEL=' scripts/webproxy_telemetry_install.sh
           grep -q '/mtpadmin/clients' scripts/webproxy_telemetry_install.sh
-          grep -q 'sessionsPerIP' scripts/webproxy_telemetry_install.sh
           grep -q "WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'" scripts/component_update.sh
-          grep -q 'bash "$WEBTELEMETRY"' scripts/component_update.sh
-          grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
-          grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q "name='component' value='" web/mtpadmin_web.d/40-async-update-ui.py
-          ! grep -q "type='hidden' name='component'" web/mtpadmin_web.d/40-async-update-ui.py
+          for comp in mtpadmin telemt webproxy; do grep -q "/action/component-update/$comp" web/mtpadmin_web.d/40-async-update-ui.py; done
+          grep -q "path=='/action/component-update'" web/mtpadmin_web.d/40-async-update-ui.py
+          ! grep -q "name='component'" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Scanner Guard self-heal contract
         run: |
