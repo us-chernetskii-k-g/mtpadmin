@@ -23,28 +23,33 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 if "VERSION='0.11.6'" not in s: raise SystemExit('unexpected immutable 0.11.6 updater')
 s=s.replace('0.11.6','0.11.8')
 
-# The immutable 0.11.6 wrapper transforms 0.9.0. Inject the new CLI fragment into
-# that transformation so the generated blue/green runtime contains the audited
-# source lifecycle instead of merely shipping the file in the repository.
-needle="s=s.replace('0.9.0','0.11.8')\n"
-insert=(needle+"s=s.replace('for part in 00-core.sh 10-sources.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do',"
-              "'for part in 00-core.sh 10-sources.sh 11-source-stability.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do',1)\n")
-if s.count(needle)!=1: raise SystemExit('0.11.6 nested transform marker not found')
-s=s.replace(needle,insert,1)
+# The immutable 0.11.6 wrapper itself transforms the older 0.9 updater.
+# Inject one extra transformation into that inner Python block. Doing this at
+# the transformation layer is intentionally more robust than trying to match
+# the escaped 0.11.6 source string from the outer wrapper.
+write_marker="p.write_text(s,encoding='utf-8')"
+if s.count(write_marker)!=1:
+    raise SystemExit('0.11.6 transform write marker not found')
+extra=r'''
+# 0.11.8: assemble the audited source lifecycle fragment in the generated CLI.
+cli_old='for part in 00-core.sh 10-sources.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
+cli_new='for part in 00-core.sh 10-sources.sh 11-source-stability.sh 20-admin.sh 21-admin-tail.sh 22-guard.sh 25-doctor-runtime.sh 29-guard-dispatch.sh 30-menu.sh; do'
+if s.count(cli_old)!=1: raise SystemExit('0.11.8 CLI assembly marker not found')
+s=s.replace(cli_old,cli_new,1)
 
-# Add 0.11.8 stability/DB extensions after the compact links extension.
-old='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'
-  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" <<'PYWEBEXT'
+# 0.11.6 has already expanded the 0.9 web assembly through fragment 41 by the
+# time this code runs. Extend that already-generated shell block through 43.
+web_fetch='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'\n'''
+web_fetch_new=web_fetch+'''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/42-stability.py" -o "$TMP/stability-extension.py" || die 'Не удалось скачать stability extension'\n  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/43-db-safety.py" -o "$TMP/db-safety-extension.py" || die 'Не удалось скачать DB safety extension'\n'''
+if s.count(web_fetch)!=1: raise SystemExit('0.11.8 web fetch marker not found')
+s=s.replace(web_fetch,web_fetch_new,1)
+
+web_args='''  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" <<'PYWEBEXT'\n'''
+web_args_new='''  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" "$TMP/stability-extension.py" "$TMP/db-safety-extension.py" <<'PYWEBEXT'\n'''
+if s.count(web_args)!=1: raise SystemExit('0.11.8 web argument marker not found')
+s=s.replace(web_args,web_args_new,1)
 '''
-new='''  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/41-webproxy-links-ui.py" -o "$TMP/webproxy-links-ui-extension.py" || die 'Не удалось скачать WEB Proxy links UI extension'
-  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/42-stability.py" -o "$TMP/stability-extension.py" || die 'Не удалось скачать stability extension'
-  curl -fsSL --retry 3 "$RAW_BASE/web/mtpadmin_web.d/43-db-safety.py" -o "$TMP/db-safety-extension.py" || die 'Не удалось скачать DB safety extension'
-  python3 - "$TMP/mtpadmin_web.py" "$TMP/world-map-extension.py" "$TMP/analytics-extension.py" "$TMP/analytics-plus-extension.py" "$TMP/operations-extension.py" "$TMP/compact-ui-extension.py" "$TMP/async-update-ui-extension.py" "$TMP/webproxy-links-ui-extension.py" "$TMP/stability-extension.py" "$TMP/db-safety-extension.py" <<'PYWEBEXT'
-'''
-if s.count(old)!=1: raise SystemExit('0.11.6 web extension block not found')
-s=s.replace(old,new,1)
-s=s.replace('for marker in 38-operations.py 39-compact-ui.py 40-async-update-ui.py 41-webproxy-links-ui.py; do',
-            'for marker in 38-operations.py 39-compact-ui.py 40-async-update-ui.py 41-webproxy-links-ui.py 42-stability.py 43-db-safety.py; do',1)
+s=s.replace(write_marker,extra+'\n'+write_marker,1)
 p.write_text(s,encoding='utf-8')
 PY
 
