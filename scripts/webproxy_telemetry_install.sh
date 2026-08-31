@@ -21,43 +21,22 @@ info(){ echo "[INFO] $*"; }
 warn(){ echo "[WARN] $*"; }
 die(){ echo "[FAIL] $*" >&2; exit 1; }
 
-[[ ${EUID:-$(id -u)} -eq 0 ]] || die 'WEB telemetry installer требует root.'
-[[ -x "$BINARY" && -f "$TPROXY_MARKER" && -f "$TPROXY_CFG" && -f "$TPROXY_PROFILES" ]] || die 'Сначала установите Telegram WEB Proxy.'
-commit=$(tr -d '\r\n' < "$TPROXY_MARKER")
-[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'Некорректный установленный commit tproxy-server.'
-expected_marker="$commit|$PATCH_LEVEL"
-
-validate_endpoint(){
-  curl -fsS --max-time 3 "$ADMIN/mtpadmin/clients" | python3 -c 'import ipaddress,json,sys; d=json.load(sys.stdin); rows=d.get("clients"); assert isinstance(rows,list); [ipaddress.ip_address(str(x.get("ip"))) for x in rows]; assert all(isinstance(x.get("sessions"),int) and x.get("sessions")>0 for x in rows)' >/dev/null 2>&1
+resolve_go(){
+  go_binary=''
+  if command -v go >/dev/null 2>&1; then
+    minor=$(go env GOVERSION 2>/dev/null | sed -E 's/^go1\.([0-9]+).*/\1/' || true)
+    [[ "$minor" =~ ^[0-9]+$ ]] && (( minor >= 20 )) && go_binary=$(command -v go)
+  fi
+  [[ -n "$go_binary" || ! -x /opt/go1.26.5/bin/go ]] || go_binary=/opt/go1.26.5/bin/go
+  [[ -n "$go_binary" ]] || die 'Go toolchain не найден; выполните WEB Proxy repair из панели.'
+  gofmt_binary="$(dirname "$go_binary")/gofmt"
+  [[ -x "$gofmt_binary" ]] || die 'gofmt не найден рядом с Go toolchain.'
 }
 
-if [[ "$(cat "$PATCH_MARKER" 2>/dev/null || true)" == "$expected_marker" ]] && validate_endpoint; then
-  ok "WEB client telemetry уже установлена: ${commit:0:12} · $PATCH_LEVEL"
-  exit 0
-fi
-
-command -v git >/dev/null 2>&1 || die 'git не найден.'
-id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'
-
-go_binary=''
-if command -v go >/dev/null 2>&1; then
-  minor=$(go env GOVERSION 2>/dev/null | sed -E 's/^go1\.([0-9]+).*/\1/' || true)
-  [[ "$minor" =~ ^[0-9]+$ ]] && (( minor >= 20 )) && go_binary=$(command -v go)
-fi
-[[ -n "$go_binary" || ! -x /opt/go1.26.5/bin/go ]] || go_binary=/opt/go1.26.5/bin/go
-[[ -n "$go_binary" ]] || die 'Go toolchain не найден; выполните WEB Proxy repair из панели.'
-gofmt_binary="$(dirname "$go_binary")/gofmt"
-[[ -x "$gofmt_binary" ]] || die 'gofmt не найден рядом с Go toolchain.'
-
-src="$TMP/tproxy-server"
-buildhome="$TMP/buildhome"
-git init -q "$src"
-git -C "$src" remote add origin "$TPROXY_REPO"
-git -C "$src" fetch -q --depth=1 origin "$commit"
-git -C "$src" checkout -q --detach FETCH_HEAD
-[[ "$(git -C "$src" rev-parse HEAD)" == "$commit" ]] || die 'Не удалось получить установленный upstream commit.'
-
-python3 - "$src/internal/session/manager.go" "$src/internal/server/server.go" <<'PY'
+patch_source(){
+  local src="$1"
+  [[ -f "$src/internal/session/manager.go" && -f "$src/internal/server/server.go" ]] || die 'Некорректное дерево tproxy-server для telemetry patch.'
+  python3 - "$src/internal/session/manager.go" "$src/internal/server/server.go" <<'PY'
 from pathlib import Path
 import sys
 manager=Path(sys.argv[1]); server=Path(sys.argv[2])
@@ -100,10 +79,48 @@ if 'func (s *Server) serveMTPAdminClients(' not in ss:
 manager.write_text(ms,encoding='utf-8')
 server.write_text(ss,encoding='utf-8')
 PY
+  "$gofmt_binary" -w "$src/internal/session/manager.go" "$src/internal/server/server.go"
+  grep -q 'MTPAdminActiveClients' "$src/internal/session/manager.go" || die 'Telemetry manager patch не применился.'
+  grep -q '/mtpadmin/clients' "$src/internal/server/server.go" || die 'Telemetry admin endpoint patch не применился.'
+}
 
-"$gofmt_binary" -w "$src/internal/session/manager.go" "$src/internal/server/server.go"
-grep -q 'MTPAdminActiveClients' "$src/internal/session/manager.go" || die 'Telemetry manager patch не применился.'
-grep -q '/mtpadmin/clients' "$src/internal/server/server.go" || die 'Telemetry admin endpoint patch не применился.'
+# CI/developer mode: patch an already checked-out upstream tree and stop before
+# any root/systemd/runtime work. This is used to compile-test the exact patch
+# logic against the pinned upstream commit.
+if [[ -n "${MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE:-}" ]]; then
+  resolve_go
+  patch_source "$MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"
+  ok "Telemetry source patch PASS: $MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"
+  exit 0
+fi
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || die 'WEB telemetry installer требует root.'
+[[ -x "$BINARY" && -f "$TPROXY_MARKER" && -f "$TPROXY_CFG" && -f "$TPROXY_PROFILES" ]] || die 'Сначала установите Telegram WEB Proxy.'
+commit=$(tr -d '\r\n' < "$TPROXY_MARKER")
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'Некорректный установленный commit tproxy-server.'
+expected_marker="$commit|$PATCH_LEVEL"
+
+validate_endpoint(){
+  curl -fsS --max-time 3 "$ADMIN/mtpadmin/clients" | python3 -c 'import ipaddress,json,sys; d=json.load(sys.stdin); rows=d.get("clients"); assert isinstance(rows,list); [ipaddress.ip_address(str(x.get("ip"))) for x in rows]; assert all(isinstance(x.get("sessions"),int) and x.get("sessions")>0 for x in rows)' >/dev/null 2>&1
+}
+
+if [[ "$(cat "$PATCH_MARKER" 2>/dev/null || true)" == "$expected_marker" ]] && validate_endpoint; then
+  ok "WEB client telemetry уже установлена: ${commit:0:12} · $PATCH_LEVEL"
+  exit 0
+fi
+
+command -v git >/dev/null 2>&1 || die 'git не найден.'
+id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'
+resolve_go
+
+src="$TMP/tproxy-server"
+buildhome="$TMP/buildhome"
+git init -q "$src"
+git -C "$src" remote add origin "$TPROXY_REPO"
+git -C "$src" fetch -q --depth=1 origin "$commit"
+git -C "$src" checkout -q --detach FETCH_HEAD
+[[ "$(git -C "$src" rev-parse HEAD)" == "$commit" ]] || die 'Не удалось получить установленный upstream commit.'
+patch_source "$src"
 
 install -d -o tproxy -g tproxy -m 0700 "$buildhome"
 chown -R tproxy:tproxy "$src"
