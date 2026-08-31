@@ -34,7 +34,9 @@ jobs:
       - name: Syntax
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.11'
+          test "$(cat VERSION)" = '0.11.12'
+          grep -q "VERSION='0.11.12'" update.sh
+          grep -q "VERSION='0.11.12'" web-install.sh
           bash -n /tmp/mtpadmin
           bash -n update.sh
           bash -n web-install.sh
@@ -44,6 +46,23 @@ jobs:
           bash -n scripts/component_update.sh
           bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
+
+      - name: Update Center form isolation regression
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'2','available':k=='mtpadmin'} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':1}
+          w._o_component_status=lambda:{}
+          html=w._o_update_center('csrf')
+          assert "type='hidden' name='component'" not in html
+          for comp in ('mtpadmin','telemt','webproxy'):
+              assert f"name='component' value='{comp}'" in html
+          doc=w.page_template('x','<form><input type="hidden" name="name" value="A"><input name="q" value="x"></form>','admin')
+          assert doc.count('input:not([type=hidden])')>=2
+          assert "root.querySelectorAll('input,select,textarea')" not in doc
+          print('Update Center form isolation PASS')
+          PY
 
       - name: SQLite FD regression
         run: |
@@ -149,6 +168,8 @@ jobs:
           grep -q 'bash "$WEBTELEMETRY"' scripts/component_update.sh
           grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
           grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
+          grep -q "name='component' value='" web/mtpadmin_web.d/40-async-update-ui.py
+          ! grep -q "type='hidden' name='component'" web/mtpadmin_web.d/40-async-update-ui.py
 
       - name: Scanner Guard self-heal contract
         run: |
