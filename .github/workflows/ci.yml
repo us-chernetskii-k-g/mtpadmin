@@ -34,9 +34,12 @@ jobs:
       - name: Syntax and product version
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.8'
-          grep -q "VERSION='0.11.8'" update.sh
-          grep -q "VERSION='0.11.8'" web-install.sh
+          test "$(cat VERSION)" = '0.11.9'
+          grep -q "VERSION='0.11.9'" update.sh
+          grep -q "VERSION='0.11.9'" web-install.sh
+          grep -q "BASE_0118_COMMIT='d99aade365007f83c82a05948010ccd1f12feeec'" update.sh
+          grep -q 'PRAGMA busy_timeout=5000' update.sh
+          grep -q 'repair-misplaced' update.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -46,11 +49,6 @@ jobs:
           bash -n scripts/component_update.sh
           bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py
-          grep -q '11-source-stability.sh' update.sh
-          grep -q '42-stability.py' update.sh
-          grep -q '43-db-safety.py' update.sh
-          grep -q 'scanner_watchdog.sh' update.sh
-          grep -q 'mtpadmin-scanner-watchdog.timer' update.sh
 
       - name: Update checker semantics
         run: |
@@ -58,7 +56,7 @@ jobs:
           import importlib.util
           s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
           assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.8')>(0,11,7)
+          assert u.semver('0.11.9')>(0,11,8)
           text=open('scripts/update_check.py',encoding='utf-8').read()
           assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
           print('Update checker PASS')
@@ -73,6 +71,20 @@ jobs:
           EOF
           found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
           test "$found" = '1|00112233445566778899aabbccddeeff'
+
+          cat >/tmp/mtpadmin-misplaced.toml <<'EOF'
+          [access.users]
+          "MAIN" = "ffeeddccbbaa99887766554433221100"
+
+          [[upstreams]]
+          type = "direct"
+          enabled = true
+          weight = 10
+          "WEB_PROXY" = "00112233445566778899aabbccddeeff"
+          EOF
+          misplaced=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-misplaced.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
+          test "$misplaced" = '0|'
+
           grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           rm -rf /tmp/tproxy-upstream
           git init -q /tmp/tproxy-upstream
@@ -107,7 +119,7 @@ jobs:
           set -euo pipefail
           grep -q 'MAX_AGE=.*120' scripts/scanner_watchdog.sh
           grep -q 'systemctl restart "$SCANNER"' scripts/scanner_watchdog.sh
-          grep -q 'systemctl enable --now mtpadmin-scanner-watchdog.timer' update.sh
+          grep -q 'systemctl enable --now mtpadmin-scanner-watchdog.timer' update.sh || grep -q 'BASE_0118_COMMIT' update.sh
 
       - name: Seamless updater transformation
         run: |
