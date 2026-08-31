@@ -64,6 +64,7 @@ case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
     MTPADMIN_BOOTSTRAP_TEST=2 bash "$TMP/update-0116.sh" || die 'Вложенная сборка update-engine не прошла.'
     [[ ! -f scripts/webproxy_install.sh ]] || bash -n scripts/webproxy_install.sh
     [[ ! -f scripts/webproxy_backend_install.sh ]] || bash -n scripts/webproxy_backend_install.sh
+    [[ ! -f scripts/scanner_watchdog.sh ]] || bash -n scripts/scanner_watchdog.sh
     ok 'Nested 0.11.8 updater transformation PASS'; exit 0 ;;
   1)
     MTPADMIN_BOOTSTRAP_TEST=1 bash "$TMP/update-0116.sh" || die 'Update wrapper test не прошёл.'
@@ -74,18 +75,44 @@ esac
 bash "$TMP/update-0116.sh"
 
 CACHE_BUST="${VERSION}-$(date +%s)"
-for file in webproxy_install.sh webproxy_backend_install.sh update_check.py component_update.sh; do
+for file in webproxy_install.sh webproxy_backend_install.sh update_check.py component_update.sh scanner_watchdog.sh; do
   curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/$file?mtpadmin=$CACHE_BUST" -o "$TMP/$file" || die "Не удалось скачать scripts/$file"
 done
 bash -n "$TMP/webproxy_install.sh" || die 'WEB Proxy installer syntax invalid.'
 bash -n "$TMP/webproxy_backend_install.sh" || die 'WEB backend installer syntax invalid.'
 bash -n "$TMP/component_update.sh" || die 'Component updater syntax invalid.'
+bash -n "$TMP/scanner_watchdog.sh" || die 'Scanner watchdog syntax invalid.'
 python3 -m py_compile "$TMP/update_check.py" || die 'Update checker syntax invalid.'
 install -d -m 0755 /usr/local/lib/mtpadmin
 install -m 0700 -o root -g root "$TMP/webproxy_install.sh" /usr/local/lib/mtpadmin/webproxy_install.sh
 install -m 0700 -o root -g root "$TMP/webproxy_backend_install.sh" /usr/local/lib/mtpadmin/webproxy_backend_install.sh
 install -m 0700 -o root -g root "$TMP/component_update.sh" /usr/local/lib/mtpadmin/component_update.sh
+install -m 0700 -o root -g root "$TMP/scanner_watchdog.sh" /usr/local/lib/mtpadmin/scanner_watchdog.sh
 install -m 0755 -o root -g root "$TMP/update_check.py" /usr/local/lib/mtpadmin/update_check.py
+
+cat > /etc/systemd/system/mtpadmin-scanner-watchdog.service <<'EOF'
+[Unit]
+Description=MTPADMIN Scanner Guard heartbeat recovery
+After=mtpadmin-telemt.service mtpadmin-scanner.service
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/lib/mtpadmin/scanner_watchdog.sh
+EOF
+cat > /etc/systemd/system/mtpadmin-scanner-watchdog.timer <<'EOF'
+[Unit]
+Description=Watch MTPADMIN Scanner Guard heartbeat
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=20s
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+chmod 0644 /etc/systemd/system/mtpadmin-scanner-watchdog.service /etc/systemd/system/mtpadmin-scanner-watchdog.timer
+systemctl daemon-reload
+systemctl enable --now mtpadmin-scanner-watchdog.timer >/dev/null
 
 info 'Проверяю/восстанавливаю Telegram WEB Proxy...'
 bash /usr/local/lib/mtpadmin/webproxy_install.sh
@@ -149,8 +176,9 @@ fi
 /usr/local/lib/mtpadmin/update_check.py >/dev/null 2>&1 || true
 systemctl restart mtpadmin-scanner.service >/dev/null 2>&1 || true
 sleep 2
+/usr/local/lib/mtpadmin/scanner_watchdog.sh >/dev/null 2>&1 || warn 'Scanner Guard watchdog пока не подтвердил свежий heartbeat.'
 
 echo
 info 'Финальная проверка MTPADMIN 0.11.8...'
 /usr/local/bin/mtpadmin doctor
-ok 'MTPADMIN 0.11.8 установлен: source lifecycle, persistent stats, WEB Proxy repair, FD regression и VPN BOSS integration.'
+ok 'MTPADMIN 0.11.8 установлен: source lifecycle, persistent stats, WEB Proxy repair, FD regression, Scanner Guard self-heal и VPN BOSS integration.'
