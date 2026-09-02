@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.14'
+VERSION='0.11.15'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}
@@ -53,7 +53,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.11.14'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.11.15'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -63,8 +63,8 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh"
 bash "$TMP/base-web-install.sh"
 
-info 'Перевожу веб-панель на проверенную blue/green схему 0.11.14...'
+info 'Перевожу веб-панель на проверенную blue/green схему 0.11.15...'
 get_update "$TMP/update-after-web.sh"
 run_update "$TMP/update-after-web.sh"
 
-ok "MTPADMIN Web $VERSION готов. Disk-backed WEB telemetry, tproxy traverse preflight, source lifecycle, persistent stats, Update Center routing safety, VPN BOSS integration и WEB client telemetry включены; autoban=OFF."
+ok "MTPADMIN Web $VERSION готов. WEB-aware Active route, stable public links, disk-backed WEB telemetry, source lifecycle, persistent stats, Update Center routing safety и VPN BOSS integration включены; autoban=OFF."
