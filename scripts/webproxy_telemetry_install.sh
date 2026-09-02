@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.13'
+VERSION='0.11.14'
 PATCH_LEVEL='mtpadmin-client-telemetry-v1'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 TPROXY_MARKER='/usr/local/lib/mtpadmin/tproxy-server.commit'
@@ -77,12 +77,14 @@ fi
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'WEB telemetry installer требует root.'
 [[ -x "$BINARY" && -f "$TPROXY_MARKER" && -f "$TPROXY_CFG" && -f "$TPROXY_PROFILES" ]] || die 'Сначала установите Telegram WEB Proxy.'
 
-# Production build state is always disk-backed. Never let Go use a small /tmp
-# tmpfs for source, module cache, build cache or GOTMPDIR.
-install -d -m 0700 -o root -g root "$BUILD_ROOT"
+# Production build state is always disk-backed. The root stays root-owned and
+# non-listable, but execute/search permission is required because the compiler
+# itself runs as the unprivileged tproxy user below.
+install -d -m 0711 -o root -g root "$BUILD_ROOT"
+chmod 0711 "$BUILD_ROOT"
 find "$BUILD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'telemetry.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true
 TMP=$(mktemp -d "$BUILD_ROOT/telemetry.XXXXXXXX")
-chmod 0755 "$TMP"
+chmod 0711 "$TMP"
 
 commit=$(tr -d '\r\n' < "$TPROXY_MARKER"); [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'Некорректный установленный commit tproxy-server.'
 expected_marker="$commit|$PATCH_LEVEL"
@@ -115,7 +117,12 @@ restore_patched_backup(){
 }
 if restore_patched_backup; then ok "WEB client telemetry восстановлена из backup без Go build: ${commit:0:12}"; exit 0; fi
 
-command -v git >/dev/null 2>&1 || die 'git не найден.'; id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'; resolve_go
+command -v git >/dev/null 2>&1 || die 'git не найден.'
+id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'
+command -v runuser >/dev/null 2>&1 || die 'runuser не найден.'
+runuser -u tproxy -- test -x "$BUILD_ROOT" || die "Build root $BUILD_ROOT недоступен пользователю tproxy для traverse."
+runuser -u tproxy -- test -x "$TMP" || die 'Telemetry workdir недоступен пользователю tproxy для traverse.'
+resolve_go
 free_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}'); [[ "$free_kb" =~ ^[0-9]+$ ]] || die 'Не удалось определить свободное место build filesystem.'
 info "WEB telemetry build filesystem: $(df -P "$TMP" | awk 'NR==2{print $1}') · свободно $((free_kb/1024)) MB"
 (( free_kb >= MIN_BUILD_FREE_KB )) || die "Недостаточно места для безопасной сборки WEB telemetry: свободно $((free_kb/1024)) MB, требуется не менее $((MIN_BUILD_FREE_KB/1024)) MB. Текущий relay оставлен без изменений."
