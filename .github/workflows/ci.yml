@@ -34,10 +34,10 @@ jobs:
       - name: Version, syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.13'
-          grep -q "VERSION='0.11.13'" install.sh
-          grep -q "VERSION='0.11.13'" update.sh
-          grep -q "VERSION='0.11.13'" web-install.sh
+          test "$(cat VERSION)" = '0.11.14'
+          grep -q "VERSION='0.11.14'" install.sh
+          grep -q "VERSION='0.11.14'" update.sh
+          grep -q "VERSION='0.11.14'" web-install.sh
           grep -q "BASE_01112_COMMIT='6b56d501c12dd7f13d1d21b76a320a5973336777'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
@@ -66,6 +66,7 @@ jobs:
           grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
           grep -q 'Начать установку с этими параметрами' install.sh
           grep -q "BUILD_ROOT='/var/tmp/mtpadmin-build'" install.sh
+          grep -q 'install -d -m 0711 -o root -g root "$BUILD_ROOT"' install.sh
           grep -q 'MTPADMIN_RELEASE_REF="$RELEASE_REF"' install.sh
           grep -q 'MTPADMIN_WEB_PASSWORD="$WEB_PASS"' install.sh
           ! grep -q 'echo.*WEB_PASS' install.sh
@@ -124,13 +125,34 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'BUILD_ROOT=${MTPADMIN_TPROXY_BUILD_ROOT:-/var/tmp/mtpadmin-build}' scripts/webproxy_telemetry_install.sh
+          grep -q 'install -d -m 0711 -o root -g root "$BUILD_ROOT"' scripts/webproxy_telemetry_install.sh
+          grep -q 'chmod 0711 "$BUILD_ROOT"' scripts/webproxy_telemetry_install.sh
           grep -q 'mktemp -d "$BUILD_ROOT/telemetry.' scripts/webproxy_telemetry_install.sh
+          grep -q 'chmod 0711 "$TMP"' scripts/webproxy_telemetry_install.sh
+          grep -q 'runuser -u tproxy -- test -x "$BUILD_ROOT"' scripts/webproxy_telemetry_install.sh
+          grep -q 'runuser -u tproxy -- test -x "$TMP"' scripts/webproxy_telemetry_install.sh
           grep -q 'GOTMPDIR="$gotmp"' scripts/webproxy_telemetry_install.sh
           grep -q 'GOCACHE="$buildhome/gocache"' scripts/webproxy_telemetry_install.sh
           grep -q 'GOMODCACHE="$buildhome/gomod"' scripts/webproxy_telemetry_install.sh
           grep -q 'restore_patched_backup' scripts/webproxy_telemetry_install.sh
           grep -q 'MIN_BUILD_FREE_KB' scripts/webproxy_telemetry_install.sh
+          grep -q 'post-update validation/repair' scripts/component_update.sh
           grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
+
+      - name: Unprivileged build-root traversal regression
+        run: |
+          set -euo pipefail
+          root=/tmp/mtpadmin-build-perm-test
+          sudo rm -rf "$root"
+          sudo install -d -m 0711 -o root -g root "$root"
+          work=$(sudo mktemp -d "$root/telemetry.XXXXXXXX")
+          sudo chmod 0711 "$work"
+          sudo install -d -m 0700 -o nobody -g nogroup "$work/buildhome"
+          sudo -u nobody test -x "$root"
+          sudo -u nobody test -x "$work"
+          sudo -u nobody test -w "$work/buildhome"
+          sudo rm -rf "$root"
+          echo 'Unprivileged build-root traversal PASS'
 
       - name: Compile patched upstream tproxy-server
         run: |
@@ -157,7 +179,7 @@ jobs:
           grep -q 'curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/install.sh' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q '\*\*0.11.13\*\*' README.md
+          grep -q '\*\*0.11.14\*\*' README.md
 
       - name: Guard against production secrets
         run: |
