@@ -62,7 +62,7 @@ MTPADMIN поднимает и обслуживает сразу два тран
 - первое и последнее появление;
 - текущая активность.
 
-WEB Proxy больше не является «чёрным ящиком»: MTPADMIN получает его активные carrier‑сессии через локальную loopback-only telemetry‑интеграцию.
+WEB Proxy больше не является «чёрным ящиком»: MTPADMIN получает его активные carrier‑сессии через локальную loopback-only telemetry‑интеграцию. Начиная с 0.11.15 production updater дополнительно проверяет именно браузерный маршрут `/active`, а не только внутреннюю helper-функцию.
 
 ### 🔗 Ссылки и QR
 
@@ -74,6 +74,8 @@ WEB Proxy больше не является «чёрным ящиком»: MTPA
 - Telegram WEB Proxy.
 
 Не нужно вручную собирать URL или искать secret в конфиге.
+
+**Уже розданная ссылка Telegram WEB Proxy сохраняется при обычных обновлениях, reinstall и repair.** MTPADMIN не должен менять её hostname/source/secret без явного административного действия. Updater контролирует идентичность WEB‑ссылки до и после обновления и остановится с ошибкой, если она неожиданно изменилась.
 
 ### 🧩 Источники
 
@@ -159,7 +161,7 @@ MTPADMIN автоматически:
 - добавляет WEB‑клиентов в общую live‑статистику;
 - показывает их IP, GeoIP и ASN.
 
-Telemetry endpoint предназначен только для локального мониторинга. В него не добавляются proxy secret, capability/session token и URL запросов.
+`tproxy-server` принимает forwarded IP только от loopback reverse proxy и валидирует его; telemetry endpoint предназначен только для локального мониторинга. В него не добавляются proxy secret, capability/session token и URL запросов.
 
 ---
 
@@ -220,7 +222,7 @@ Clean installer сначала собирает все параметры и **�
 curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/update.sh | sudo bash
 ```
 
-Updater использует backup, health‑checks, rollback‑логику и проверки runtime.
+Updater использует backup, health‑checks, rollback‑логику и проверки runtime. Для существующего WEB Proxy он дополнительно контролирует, что hostname/source/secret не изменились, а браузерный `/active` действительно использует WEB-aware renderer.
 
 ---
 
@@ -284,8 +286,10 @@ TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR
 
 # Текущий публичный релиз
 
-**0.11.14** — hotfix production‑сборки WEB client telemetry. Disk-backed build остаётся в `/var/tmp/mtpadmin-build`, но root-owned build root теперь имеет безопасный traverse (`0711`) для непривилегированного пользователя `tproxy`; перед Go build выполняется отдельный permission preflight. Также Update Center различает ситуацию «версия уже применена, но post-update validation/repair не завершился» вместо безликой ошибки `rc=1`.
+**0.11.15** — исправлен реальный HTTP‑маршрут страницы «Активные»: WEB Proxy renderer теперь подключён к analytics-plus route, поэтому активные WEB‑клиенты отображаются вместе с TeleMT, включая IP/GeoIP/ASN. Production updater проверяет браузерный `/active` и, если telemetry видит живой WEB IP, требует увидеть этот IP в HTML страницы.
 
-Сохраняются возможности 0.11.13: единый clean‑install wizard, обычный MTProto + WEB Proxy, веб‑админка, WEB client IP/GeoIP/ASN telemetry, persistent stats, source lifecycle, route-safe Update Center, blue/green web deploy и Scanner Guard self‑heal.
+Также 0.11.15 закрепляет стабильность уже розданных WEB‑ссылок: updater сравнивает hostname/source/secret до и после update/repair без вывода raw secret. Проверка WEB source теперь учитывает `in_runtime=true`, а не только наличие имени в disk-first API TeleMT.
+
+Сохраняются возможности 0.11.14/0.11.13: единый clean‑install wizard, обычный MTProto + WEB Proxy, веб‑админка, disk-backed WEB telemetry, persistent stats, source lifecycle, route-safe Update Center, blue/green web deploy и Scanner Guard self‑heal.
 
 Issues и Pull Requests приветствуются.
