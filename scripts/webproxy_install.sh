@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.8'
+VERSION='0.11.15'
 PINNED_TPROXY_COMMIT='52a5feb7fac38f68da5afef9cedd9b3bfc8473ca'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 STATE='/etc/mtpadmin/state.env'
@@ -48,11 +48,21 @@ else:
 PY
 }
 
+runtime_json_has_source(){
+  python3 -c 'import json,sys; wanted=sys.argv[1]; d=json.load(sys.stdin); rows=d.get("data") or []; raise SystemExit(0 if any(str(x.get("username"))==wanted and x.get("in_runtime") is True for x in rows) else 1)' "$WEBPROXY_SOURCE"
+}
+
 if [[ -n "${MTPADMIN_WEBPROXY_PROBE_CONFIG:-}" ]]; then
   CFG="$MTPADMIN_WEBPROXY_PROBE_CONFIG"
   WEBPROXY_SOURCE="${MTPADMIN_WEBPROXY_PROBE_SOURCE:-WEB_PROXY}"
   probe_telemt_source
   exit 0
+fi
+
+if [[ -n "${MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON:-}" ]]; then
+  WEBPROXY_SOURCE="${MTPADMIN_WEBPROXY_PROBE_SOURCE:-WEB_PROXY}"
+  printf '%s' "$MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON" | runtime_json_has_source
+  exit $?
 fi
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'WEB Proxy installer требует root.'
@@ -103,7 +113,7 @@ wait_telemt(){
 }
 
 runtime_has_source(){
-  curl -fsS --max-time 4 "$API/v1/users" | python3 -c 'import json,sys; wanted=sys.argv[1]; d=json.load(sys.stdin); raise SystemExit(0 if any(str(x.get("username"))==wanted for x in (d.get("data") or [])) else 1)' "$WEBPROXY_SOURCE"
+  curl -fsS --max-time 4 "$API/v1/users" | runtime_json_has_source
 }
 
 reload_telemt(){
