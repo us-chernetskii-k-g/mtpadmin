@@ -126,7 +126,7 @@ mtpadmin doctor
 
 ---
 
-# Telegram WEB Proxy
+# Новый Telegram WEB Proxy
 
 Для пользователя это обычная WEB‑ссылка / QR из панели. Серверная схема:
 
