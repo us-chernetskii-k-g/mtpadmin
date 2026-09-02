@@ -2,7 +2,7 @@
 
 **Поднять собственный Telegram Proxy, получить готовые ссылки и QR, видеть клиентов и статистику, управлять источниками и обновлять всё из браузера.**
 
-MTPADMIN — бесплатный open-source инструмент экосистемы **VPN BOSS** для тех, кто хочет свой Telegram Proxy на VPS, но не хочет каждый раз вручную править конфиги, собирать ссылки, читать systemd-логи и бояться очередного обновления.
+MTPADMIN — бесплатный open-source инструмент экосистемы **VPN BOSS** для тех, кто хочет собственный Telegram Proxy на VPS, но не хочет постоянно править конфиги, собирать ссылки вручную и разбираться с systemd после каждого изменения.
 
 > **Установили один раз — дальше основная работа идёт через веб‑панель.**
 
@@ -10,23 +10,23 @@ MTPADMIN — бесплатный open-source инструмент экосис�
 
 ---
 
-## Что нового и зачем это вообще нужно
+## Два Telegram Proxy в одной установке
 
-MTPADMIN теперь поднимает **два транспорта Telegram Proxy одновременно**:
+MTPADMIN поднимает и обслуживает сразу два транспорта:
 
-| | Обычный MTProto Proxy | Новый Telegram WEB Proxy |
+| | Обычный MTProto Proxy | Telegram WEB Proxy |
 |---|---|---|
 | Транспорт | MTProto | HTTPS |
-| Порт | настраивается, по умолчанию `8443` | стандартный `443` |
+| Порт | настраивается, обычно `8443` | стандартный `443` |
 | Серверная часть | TeleMT | `tproxy-server` + официальный `TelegramMessenger/MTProxy` |
-| Ссылки и QR | ✅ | ✅ |
+| Готовые ссылки и QR | ✅ | ✅ |
 | Управление из MTPADMIN | ✅ | ✅ |
 | Live‑клиенты | ✅ | ✅ |
 | IP / GeoIP / ASN | ✅ | ✅ |
 | История и статистика | ✅ | ✅ |
 | Диагностика / repair | ✅ | ✅ |
 
-WEB Proxy — это **дополнительный HTTPS-транспорт**, который живёт рядом с обычным MTProto Proxy. Можно использовать оба варианта и переключаться между ними без отдельной ручной инфраструктуры.
+**WEB Proxy — не отдельный проект и не отдельная админка.** Он встроен в MTPADMIN и работает рядом с обычным MTProto Proxy.
 
 ---
 
@@ -34,41 +34,37 @@ WEB Proxy — это **дополнительный HTTPS-транспорт**, 
 
 После установки вы получаете HTTPS‑панель управления MTPADMIN.
 
-Из браузера доступны:
-
 ### 📊 Обзор
 
-Состояние сервера и ключевые показатели в одном месте:
+На одной странице видно состояние:
 
 - TeleMT;
-- WEB Proxy;
-- статистический collector;
+- Telegram WEB Proxy;
+- статистического collector;
 - Scanner Guard;
+- веб‑панели;
 - DNS;
-- память и swap;
-- свободное место;
-- состояние backend и relay.
+- памяти и swap;
+- свободного места;
+- backend и relay.
 
 ### 👥 Активные клиенты
 
-В одном live‑списке отображаются **обычные MTProto и WEB Proxy клиенты**.
+Обычные MTProto и WEB Proxy клиенты отображаются **в одном live‑списке**.
 
 Для активных клиентов доступны:
 
 - IP;
-- страна;
-- город;
+- страна и город;
 - ASN;
 - провайдер / сеть;
 - источник подключения;
 - первое и последнее появление;
 - текущая активность.
 
-WEB Proxy больше не является «чёрным ящиком»: MTPADMIN видит его активные carrier‑сессии через локальную telemetry‑интеграцию.
+WEB Proxy больше не является «чёрным ящиком»: MTPADMIN получает его активные carrier‑сессии через локальную loopback-only telemetry‑интеграцию.
 
 ### 🔗 Ссылки и QR
-
-Не нужно собирать URL вручную.
 
 Панель формирует готовые подключения для:
 
@@ -77,18 +73,11 @@ WEB Proxy больше не является «чёрным ящиком»: MTPA
 - FakeTLS;
 - Telegram WEB Proxy.
 
-Secrets по умолчанию не нужно искать в конфиге или логах.
+Не нужно вручную собирать URL или искать secret в конфиге.
 
 ### 🧩 Источники
 
-Можно создавать отдельные source для разных задач, например:
-
-- основной доступ;
-- сайт;
-- друзья;
-- реклама;
-- отдельный проект;
-- конкретная площадка.
+Можно создавать отдельные source для сайта, друзей, рекламы, проекта или любой другой площадки и видеть их статистику отдельно.
 
 Для существующего source можно менять:
 
@@ -96,9 +85,9 @@ Secrets по умолчанию не нужно искать в конфиге �
 - максимальное число TCP‑соединений;
 - лимит уникальных IP.
 
-MTPADMIN не ограничивается записью файла: после изменения он проверяет, что source **реально появился в runtime TeleMT**. При проблеме выполняется recovery/rollback.
+После изменения MTPADMIN проверяет не только конфиг на диске, но и то, что source реально появился в runtime TeleMT. При проблеме используется recovery/restart/rollback логика.
 
-### 📈 Статистика
+### 📈 Статистика и география
 
 Локально сохраняются:
 
@@ -111,60 +100,48 @@ MTPADMIN не ограничивается записью файла: после
 - история клиентов;
 - пики активности.
 
-Историческая статистика не должна исчезать только потому, что TeleMT был перезапущен.
-
-### 🌍 География
-
-GeoIP работает локально. Панель показывает географию клиентов и сети без необходимости отправлять полный список IP во внешний GeoIP API.
+GeoIP обрабатывается локально. Полный список IP не нужно отправлять во внешний GeoIP API.
 
 ### 🛡 Безопасность
 
-В MTPADMIN есть Scanner Guard и инструменты наблюдения за подозрительной активностью.
+В MTPADMIN есть Scanner Guard, Risk Score, whitelist и ручные блокировки.
 
 Автоматические агрессивные блокировки **не включаются по умолчанию** — autoban остаётся `OFF`, пока администратор сам не решит иначе.
 
 ### 🔄 Update Center
 
-MTPADMIN, TeleMT и WEB Proxy можно проверять и обновлять **прямо из веб‑панели**.
+MTPADMIN, TeleMT и Telegram WEB Proxy можно проверять и обновлять **прямо из браузера**.
 
-Update Center использует отдельные фоновые systemd‑jobs и lock от параллельных обновлений. Для MTPADMIN используется blue/green переключение веб‑панели.
+Update Center использует фоновые systemd‑jobs и lock от параллельных операций. Веб‑панель MTPADMIN переключается по blue/green схеме, поэтому сам TeleMT не нужно останавливать ради обновления интерфейса.
 
-То есть обычное обновление не должно превращаться в ручной набор команд по SSH.
+Если операция продолжает работать, вкладку можно закрыть — задача выполняется на сервере.
 
 ### 🩺 Диагностика
-
-Одна команда:
 
 ```bash
 mtpadmin doctor
 ```
 
-проверяет основные компоненты установки и показывает `PASS / WARN / FAIL` понятным списком.
+`doctor` проверяет ключевые компоненты установки и показывает `PASS / WARN / FAIL` понятным списком.
 
 ---
 
-# Новый Telegram WEB Proxy
+# Telegram WEB Proxy
 
-Одна из главных возможностей новых версий MTPADMIN — полностью интегрированный **Telegram WEB Proxy**.
-
-Для пользователя это обычная WEB‑ссылка / QR из панели. Серверная схема выглядит так:
+Для пользователя это обычная WEB‑ссылка / QR из панели. Серверная схема:
 
 ```text
 Telegram Desktop
-      │
       │ HTTPS :443
       ▼
 WEB Proxy hostname
-      │
       ▼
     Caddy
-      │
       ▼
 tproxy-server
       │ localhost
       ▼
 official Telegram MTProxy
-      │
       ▼
    Telegram
 ```
@@ -175,23 +152,20 @@ MTPADMIN автоматически:
 - поднимает HTTPS через Caddy;
 - устанавливает `telegramdesktop/tproxy-server`;
 - подключает официальный `TelegramMessenger/MTProxy` backend;
-- держит backend‑порты закрытыми от внешнего доступа;
-- проверяет `READY` relay;
-- следит за безопасными pending limits;
+- держит backend/admin‑порты на loopback;
+- проверяет READY relay;
+- применяет безопасный pending limit;
 - умеет repair/reinstall WEB Proxy из Update Center;
-- показывает WEB‑сессии в веб‑админке;
-- добавляет WEB‑клиентов в общую статистику;
-- показывает WEB IP, GeoIP и ASN через loopback‑only telemetry.
+- добавляет WEB‑клиентов в общую live‑статистику;
+- показывает их IP, GeoIP и ASN.
 
-Telemetry endpoint не предназначен для публикации наружу: он находится на локальном admin listener и отдаёт MTPADMIN только данные, необходимые для мониторинга активных клиентов. Proxy secret, capability/session token и URL запросов туда не добавляются.
+Telemetry endpoint предназначен только для локального мониторинга. В него не добавляются proxy secret, capability/session token и URL запросов.
 
 ---
 
 # Установка
 
 ## Требования
-
-Для обычной установки нужен:
 
 - VPS / сервер с публичным IPv4;
 - Debian/Ubuntu;
@@ -213,7 +187,7 @@ webproxy.example.com    — Telegram WEB Proxy
 curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/install.sh | sudo bash
 ```
 
-Clean installer запускает единый мастер настройки. До начала установки он собирает параметры и показывает итоговую конфигурацию.
+Clean installer сначала собирает все параметры и **до первого изменения системы** показывает итоговую конфигурацию.
 
 Мастер спрашивает:
 
@@ -225,44 +199,18 @@ Clean installer запускает единый мастер настройки.
 - существующий raw secret или генерацию нового;
 - Advertising tag;
 - рекламируемый Telegram‑канал — если нужен;
-- срок хранения полных IP;
-- срок хранения обезличенной истории;
+- сроки хранения истории;
 - домен веб‑админки;
-- логин администратора;
-- пароль + подтверждение;
+- логин и пароль администратора;
 - отдельный домен Telegram WEB Proxy.
 
 Пароль панели и raw secret не выводятся в открытом виде в итоговой сводке.
-
-После подтверждения MTPADMIN устанавливает и проверяет всю цепочку автоматически.
-
----
-
-# Как выглядит обычная работа после установки
-
-Вместо постоянного SSH:
-
-```text
-Открыли MTPADMIN в браузере
-        ↓
-посмотрели активных клиентов
-        ↓
-создали новый source
-        ↓
-получили ссылку / QR
-        ↓
-посмотрели статистику
-        ↓
-при появлении обновления нажали Update
-```
-
-SSH остаётся для диагностики и аварийных случаев, а не как основной интерфейс управления.
 
 ---
 
 # Обновление
 
-Предпочтительный путь для установленной системы:
+Предпочтительный путь:
 
 **MTPADMIN → Операции → Update Center**
 
@@ -272,7 +220,7 @@ SSH остаётся для диагностики и аварийных слу�
 curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/update.sh | sudo bash
 ```
 
-Updater использует backup, health‑checks, rollback‑логику и проверки runtime. Веб‑панель обновляется по blue/green схеме.
+Updater использует backup, health‑checks, rollback‑логику и проверки runtime.
 
 ---
 
@@ -280,7 +228,7 @@ Updater использует backup, health‑checks, rollback‑логику и
 
 MTPADMIN — это **Telegram Proxy manager**, а не полноценный VPN‑сервер для всего интернет‑трафика устройства.
 
-Если интересует основной VPN‑проект и другие инструменты экосистемы — переходите в **VPN BOSS**.
+Для основного VPN‑проекта и других инструментов экосистемы:
 
 - 🌐 [brakonder.ru](https://brakonder.ru)
 - 💬 [t.me/boss_of_this_vpn](https://t.me/boss_of_this_vpn)
@@ -289,22 +237,18 @@ MTPADMIN — это **Telegram Proxy manager**, а не полноценный V
 
 # Архитектура
 
-Для тех, кому важны детали:
-
 - основной MTProto engine — **TeleMT**;
 - WEB relay — **telegramdesktop/tproxy-server**;
 - WEB backend — официальный **TelegramMessenger/MTProxy**;
 - HTTPS — **Caddy**;
-- веб‑панель — лёгкий локальный Python backend за Caddy Basic Auth;
+- веб‑панель — локальный Python backend за Caddy;
 - статистика — локальная SQLite DB;
 - GeoIP — локальная DB-IP Lite;
-- управление сервисами — systemd;
+- сервисы — systemd;
 - Update Center — фоновые systemd jobs + lock;
 - web deploy — blue/green;
 - WEB telemetry — loopback-only endpoint;
 - Scanner Guard autoban — `OFF` по умолчанию.
-
-Локальные backend/admin‑порты не должны публиковаться наружу.
 
 ---
 
@@ -330,24 +274,18 @@ UQCjpkzF3YQKSXZUu7jxETBndx8qx6M21M4QtTKwi8_Ee2A1
 0xe93f304d4828c0dbc6667dd2761eb7b07e325ed4
 ```
 
-Ориентир по комиссии — около `0.8 USDT`; фактическая комиссия зависит от кошелька или биржи.
-
 ### USDT · TRC‑20
 
 ```text
 TFkFVRq9PEcSe4xbYG5NF24srPCjsPrizR
 ```
 
-TRC‑20 обычно менее выгоден для небольшой поддержки; ориентир по комиссии — около `2.5 USDT`.
-
 ---
 
-# Проект
+# Текущий публичный релиз
 
-MTPADMIN развивается как часть экосистемы **VPN BOSS**.
+**0.11.14** — hotfix production‑сборки WEB client telemetry. Disk-backed build остаётся в `/var/tmp/mtpadmin-build`, но root-owned build root теперь имеет безопасный traverse (`0711`) для непривилегированного пользователя `tproxy`; перед Go build выполняется отдельный permission preflight. Также Update Center различает ситуацию «версия уже применена, но post-update validation/repair не завершился» вместо безликой ошибки `rc=1`.
 
-Если нашли ошибку или есть идея — Issues и Pull Requests приветствуются.
+Сохраняются возможности 0.11.13: единый clean‑install wizard, обычный MTProto + WEB Proxy, веб‑админка, WEB client IP/GeoIP/ASN telemetry, persistent stats, source lifecycle, route-safe Update Center, blue/green web deploy и Scanner Guard self‑heal.
 
-## Текущий публичный релиз
-
-**0.11.13** — единый clean‑install wizard, route‑safe Update Center, обычный MTProto + WEB Proxy, WEB client IP/GeoIP/ASN telemetry, persistent stats, source lifecycle, blue/green web deploy, Scanner Guard self‑heal и disk‑safe WEB telemetry build.
+Issues и Pull Requests приветствуются.
