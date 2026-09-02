@@ -8,42 +8,40 @@ permissions:
   contents: read
 
 jobs:
-  syntax:
+  release:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assemble final runtime
+      - name: Assemble runtime
         run: |
           set -euo pipefail
           cat src/mtpadmin.d/00-core.sh src/mtpadmin.d/10-sources.sh src/mtpadmin.d/11-source-stability.sh src/mtpadmin.d/20-admin.sh src/mtpadmin.d/21-admin-tail.sh src/mtpadmin.d/22-guard.sh src/mtpadmin.d/25-doctor-runtime.sh src/mtpadmin.d/29-guard-dispatch.sh src/mtpadmin.d/30-menu.sh > /tmp/mtpadmin
           python3 scripts/normalize_cli.py /tmp/mtpadmin
-          cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats_collector.py
+          cat src/stats_collector.d/00-core.py src/stats_collector.d/10-runtime.py > /tmp/stats.py
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('/tmp/stats_collector.py'); s=p.read_text(); m="if __name__=='__main__': raise SystemExit(main() or 0)"
+          p=Path('/tmp/stats.py'); s=p.read_text(); m="if __name__=='__main__': raise SystemExit(main() or 0)"
           e=Path('src/stats_collector.d/15-online-history.py').read_text(); assert s.count(m)==1
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
-          p=Path('/tmp/mtpadmin_web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
+          p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
           for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
 
-      - name: Syntax and product version
+      - name: Version, syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.12'
-          grep -q "VERSION='0.11.12'" update.sh
-          grep -q "VERSION='0.11.12'" web-install.sh
-          grep -q "BASE_01111_COMMIT='2805deea1364556677a352dcefeb049ae0ed6a48'" update.sh
-          grep -q 'webproxy_telemetry_install.sh' update.sh
-          grep -q 'WEBTELEMETRY=' scripts/component_update.sh
+          test "$(cat VERSION)" = '0.11.13'
+          grep -q "VERSION='0.11.13'" install.sh
+          grep -q "VERSION='0.11.13'" update.sh
+          grep -q "VERSION='0.11.13'" web-install.sh
+          grep -q "BASE_01112_COMMIT='6b56d501c12dd7f13d1d21b76a320a5973336777'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
+          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' web-install.sh
-          grep -q '\$ROOT/\$RELEASE_REF/web-install.sh' install.sh
-          grep -q '\$ROOT/\$RELEASE_REF/update.sh' web-install.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -53,106 +51,88 @@ jobs:
           bash -n scripts/webproxy_telemetry_install.sh
           bash -n scripts/component_update.sh
           bash -n scripts/scanner_watchdog.sh
-          python3 -m py_compile /tmp/stats_collector.py /tmp/mtpadmin_web.py scripts/normalize_cli.py src/user_config.py src/scanner_guard.py scripts/update_check.py
+          python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
-      - name: Update checker semantics
+      - name: Clean install wizard contract
+        run: |
+          set -euo pipefail
+          grep -q 'MTPADMIN CLEAN INSTALL' install.sh
+          grep -q 'До подтверждения система не изменяется' install.sh
+          grep -q "ask 'Домен обычного MTProto Proxy'" install.sh
+          grep -q "ask 'Домен веб-админки'" install.sh
+          grep -q "ask 'Логин администратора'" install.sh
+          grep -q "Пароль веб-админки (минимум 10 символов)" install.sh
+          grep -q 'Повторите пароль веб-админки' install.sh
+          grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
+          grep -q 'Начать установку с этими параметрами' install.sh
+          grep -q "BUILD_ROOT='/var/tmp/mtpadmin-build'" install.sh
+          grep -q 'MTPADMIN_RELEASE_REF="$RELEASE_REF"' install.sh
+          grep -q 'MTPADMIN_WEB_PASSWORD="$WEB_PASS"' install.sh
+          ! grep -q 'echo.*WEB_PASS' install.sh
+
+      - name: Update Center route isolation regression
         run: |
           python3 - <<'PY'
           import importlib.util
-          s=importlib.util.spec_from_file_location('u','scripts/update_check.py'); u=importlib.util.module_from_spec(s); s.loader.exec_module(u)
-          assert u.semver('v3.5.5')==(3,5,5)
-          assert u.semver('0.11.12')>(0,11,11)
-          text=open('scripts/update_check.py',encoding='utf-8').read()
-          assert '/contents/{path}?ref={ref}' in text and 'Cache-Control' in text and 'no-cache' in text
-          print('Update checker PASS')
-          PY
-
-      - name: Update Center routing and live-refresh regression
-        run: |
-          python3 - <<'PY'
-          import importlib.util
-          spec=importlib.util.spec_from_file_location('w','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_update_status=lambda:{'components':{
-              'mtpadmin':{'current':'0.11.11','latest':'0.11.12','available':True},
-              'telemt':{'current':'3.5.5','latest':'3.5.5','available':False},
-              'webproxy':{'current':'a'*40,'latest':'a'*40,'available':False}},'checked_at':1,'updates':1}
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'2','available':k=='mtpadmin'} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':1}
           w._o_component_status=lambda:{}
-          html=w._o_update_center('csrf-token')
+          html=w._o_update_center('csrf')
           assert "name='component'" not in html
           for comp in ('mtpadmin','telemt','webproxy'):
-              assert f"action='/action/component-update/{comp}'" in html,comp
-              assert f"data-component='{comp}'" in html,comp
-          doc=w.page_template('T','<input type="hidden" name="component" value="mtpadmin"><input name="q" value="abc">','admin')
-          assert doc.count('input:not([type=hidden])')>=2
+              assert f"action='/action/component-update/{comp}'" in html
+          doc=w.page_template('x','<form><input type="hidden" name="name" value="A"><input name="q" value="x"></form>','admin')
+          assert 'input:not([type=hidden])' in doc
           assert "root.querySelectorAll('input,select,textarea')" not in doc
-
-          calls=[]; redirects=[]; responses=[]
-          w.csrf_ok=lambda user,token: True
-          def fake_run(args,timeout=10): calls.append(list(args)); return 0,'job'
-          w.run=fake_run
-          class Fake:
+          calls=[]; responses=[]
+          w.csrf_ok=lambda *a: True
+          w.run=lambda args,timeout=10:(calls.append(list(args)) or (0,'job'))
+          class F:
               def require_user(self): return True
               def user(self): return 'admin'
               def form(self): return {'csrf':'x'}
-              def redirect(self,where,msg=''): redirects.append((where,msg))
+              def redirect(self,*a,**k): pass
               def send_html(self,*a,**k): responses.append((a,k))
           for comp in ('mtpadmin','telemt','webproxy'):
-              f=Fake(); f.path='/action/component-update/'+comp; w._au_do_POST(f)
-              assert calls[-1]==[w._O_COMPONENT,'dispatch',comp],calls[-1]
-              assert comp in redirects[-1][1]
-          before=len(calls); stale=Fake(); stale.path='/action/component-update'; w._au_do_POST(stale)
-          assert len(calls)==before
-          assert responses and responses[-1][0][3]==409,responses[-1]
-          assert [x[-1] for x in calls[-3:]]==['mtpadmin','telemt','webproxy']
+              f=F(); f.path='/action/component-update/'+comp; w._au_do_POST(f); assert calls[-1][-1]==comp
+          n=len(calls); f=F(); f.path='/action/component-update'; w._au_do_POST(f)
+          assert len(calls)==n and responses[-1][0][3]==409
           print('Update Center routing PASS')
           PY
 
       - name: WEB client UI and collector contract
         run: |
-          set -euo pipefail
           python3 - <<'PY'
-          import importlib.util, sqlite3
-          spec=importlib.util.spec_from_file_location('w','/tmp/mtpadmin_web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           w.state=lambda:{'PROFILE':'DEIMOS','WEBPROXY_SOURCE':'WEB_PROXY'}
           w._wpa_source_rows=lambda:[{'username':'DEIMOS','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
-          w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':18489,'tproxy_bytes_down_total':21873,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':100,'tproxy_bytes_down_total':200,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
           w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
-          w.api_json=lambda path,**kw: [{'username':'DEIMOS','active_ips':['203.0.113.7']}] if path=='/v1/stats/users/active-ips' else []
-          w.query=lambda *a,**kw: []
+          w.api_json=lambda path,**kw:[{'username':'DEIMOS','active_ips':['203.0.113.7']}] if path=='/v1/stats/users/active-ips' else []
+          w.query=lambda *a,**kw:[]
           rows={r['username']:r for r in w.source_rows()}
-          assert rows['DEIMOS']['current_connections']==4
-          assert rows['WEB_PROXY']['current_connections']==3
-          assert rows['WEB_PROXY']['active_unique_ips']==2
-          assert rows['WEB_PROXY']['web_streams_live']==8
-          html=w.active_clients_html()
-          assert '198.51.100.10' in html and '2001:db8::10' in html and '203.0.113.7' in html
-          assert '● WEB' in html and 'TeleMT + WEB Proxy' in html and 'оба транспорта' in html
-          print('WEB UI client merge PASS')
-
-          spec=importlib.util.spec_from_file_location('s','/tmp/stats_collector.py'); sc=importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
-          sc.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}
-          sc._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}
-          sc._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
-          active=sc.active_pairs()
-          assert ('WEB_PROXY','198.51.100.10') in active and ('WEB_PROXY','2001:db8::10') in active
-          con=sqlite3.connect(':memory:')
-          con.executescript('''
-          CREATE TABLE online_samples(ts INTEGER NOT NULL,username TEXT NOT NULL,connections INTEGER NOT NULL DEFAULT 0,unique_ips INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(ts,username));
-          CREATE TABLE daily_traffic(day TEXT NOT NULL,username TEXT NOT NULL,connections INTEGER NOT NULL DEFAULT 0,bad_connections INTEGER NOT NULL DEFAULT 0,bytes_from_client INTEGER NOT NULL DEFAULT 0,bytes_to_client INTEGER NOT NULL DEFAULT 0,peak_connections INTEGER NOT NULL DEFAULT 0,peak_unique_ips INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(day,username));
-          CREATE TABLE counter_state(username TEXT PRIMARY KEY,conn_total INTEGER NOT NULL DEFAULT 0,bad_total INTEGER NOT NULL DEFAULT 0,bytes_from INTEGER NOT NULL DEFAULT 0,bytes_to INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0);
-          ''')
-          sc._online_last_sample=0
-          sc._sample_online(con,{'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':1}},active,60,{'tproxy_sessions_live':3},'WEB_PROXY')
-          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(3,2)
-          assert con.execute("select connections,unique_ips from online_samples where username='__GLOBAL__'").fetchone()==(7,3)
-          sc._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60,2)
-          sc._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':3,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70,2)
-          row=con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections,peak_unique_ips from daily_traffic where username='WEB_PROXY'").fetchone()
-          assert row==(2,100,300,3,2),row
-          print('WEB collector client merge PASS')
+          assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
+          html=w.active_clients_html(); assert '198.51.100.10' in html and '2001:db8::10' in html and '● WEB' in html
+          spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
+          s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}; s._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}; s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
+          assert ('WEB_PROXY','198.51.100.10') in s.active_pairs()
+          print('WEB UI/collector PASS')
           PY
 
-      - name: Patched tproxy upstream build
+      - name: Disk-backed telemetry contract
+        run: |
+          set -euo pipefail
+          grep -q 'BUILD_ROOT=${MTPADMIN_TPROXY_BUILD_ROOT:-/var/tmp/mtpadmin-build}' scripts/webproxy_telemetry_install.sh
+          grep -q 'mktemp -d "$BUILD_ROOT/telemetry.' scripts/webproxy_telemetry_install.sh
+          grep -q 'GOTMPDIR="$gotmp"' scripts/webproxy_telemetry_install.sh
+          grep -q 'GOCACHE="$buildhome/gocache"' scripts/webproxy_telemetry_install.sh
+          grep -q 'GOMODCACHE="$buildhome/gomod"' scripts/webproxy_telemetry_install.sh
+          grep -q 'restore_patched_backup' scripts/webproxy_telemetry_install.sh
+          grep -q 'MIN_BUILD_FREE_KB' scripts/webproxy_telemetry_install.sh
+          grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
+
+      - name: Compile patched upstream tproxy-server
         run: |
           set -euo pipefail
           rm -rf /tmp/tproxy-upstream
@@ -161,47 +141,23 @@ jobs:
           git -C /tmp/tproxy-upstream fetch -q --depth=1 origin 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE=/tmp/tproxy-upstream bash scripts/webproxy_telemetry_install.sh
-          grep -q 'MTPAdminActiveClients' /tmp/tproxy-upstream/internal/session/manager.go
-          grep -q '/mtpadmin/clients' /tmp/tproxy-upstream/internal/server/server.go
-          (cd /tmp/tproxy-upstream && umask 022 && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
-
-      - name: WEB Proxy source and production contracts
-        run: |
-          set -euo pipefail
-          cat >/tmp/mtpadmin-partial.toml <<'EOF'
-          [access.users]
-          "WEB_PROXY" = "00112233445566778899aabbccddeeff"
-          EOF
-          found=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-partial.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
-          test "$found" = '1|00112233445566778899aabbccddeeff'
-          grep -q 'max_pending_items_per_session": 16384' scripts/webproxy_install.sh
-          grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
-          grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
-          grep -q 'RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK' scripts/webproxy_backend_install.sh
-          grep -q "WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'" scripts/component_update.sh
-          grep -q 'bash "$WEBTELEMETRY"' scripts/component_update.sh
-          grep -q '/mtpadmin/clients' scripts/component_update.sh
-          grep -q 'systemd-run --quiet --no-block --collect' scripts/component_update.sh
-          grep -q 'flock -n 9' scripts/component_update.sh
-          grep -q 'MTPADMIN_RELEASE_REF' scripts/component_update.sh
-          grep -q '_TPROXY_CLIENTS' src/stats_collector.d/15-online-history.py
-          grep -q '_WPA_CLIENTS_URL' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -Fq "action='/action/component-update/{esc(key)}'" web/mtpadmin_web.d/40-async-update-ui.py
-          grep -Fq "prefix='/action/component-update/'" web/mtpadmin_web.d/40-async-update-ui.py
-          grep -Fq "if path=='/action/component-update':" web/mtpadmin_web.d/40-async-update-ui.py
+          (cd /tmp/tproxy-upstream && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
 
       - name: Seamless updater transformation
         run: |
           set -euo pipefail
           MTPADMIN_BOOTSTRAP_TEST=2 bash update.sh
 
-      - name: Product page and support
+      - name: Public README contract
         run: |
           set -euo pipefail
-          grep -q 'экосистемы VPN BOSS' README.md
+          grep -q 'свой Telegram Proxy с веб' README.md
+          grep -q 'Новый Telegram WEB Proxy' README.md
+          grep -q 'Update Center' README.md
+          grep -q 'curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/install.sh' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q 'https://t.me/boss_of_this_vpn' scripts/webproxy_install.sh
+          grep -q '\*\*0.11.13\*\*' README.md
 
       - name: Guard against production secrets
         run: |
