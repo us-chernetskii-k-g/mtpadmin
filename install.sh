@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.13'
+VERSION='0.11.14'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
@@ -24,8 +24,6 @@ command -v curl >/dev/null 2>&1 || die 'Не найден curl.'
 [[ -r /dev/tty && -w /dev/tty ]] || die 'Clean install требует интерактивный /dev/tty (SSH/консоль).'
 exec 3<>/dev/tty
 
-# Pin the complete clean installation to one immutable commit. This prevents a
-# long install from mixing fragments if main changes halfway through.
 if [[ "$RELEASE_REF" == main ]]; then
   resolved=$(curl -fsSL --retry 3 "$API/branches/main" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))' 2>/dev/null || true)
   [[ "$resolved" =~ ^[0-9a-f]{40}$ ]] || die 'Не удалось зафиксировать commit main для clean install.'
@@ -123,9 +121,9 @@ valid_host "$WEBPROXY_HOST" || die 'Некорректный домен Telegram
 [[ "$WEB_USER" =~ ^[A-Za-z0-9_.@-]{1,64}$ ]] || die 'Некорректный логин администратора.'
 ((${#WEB_PASS}>=10)) || die 'Пароль веб-админки должен быть минимум 10 символов.'
 
-# Preflight disk-backed build area. The telemetry build must never depend on a
-# small tmpfs mounted at /tmp.
-install -d -m 0700 -o root -g root "$BUILD_ROOT"
+# Disk-backed build root is searchable by the unprivileged tproxy compiler but
+# remains root-owned and non-listable.
+install -d -m 0711 -o root -g root "$BUILD_ROOT"
 FREE_BUILD_KB=$(df -Pk "$BUILD_ROOT" | awk 'NR==2{print $4}')
 [[ "$FREE_BUILD_KB" =~ ^[0-9]+$ ]] || die 'Не удалось проверить свободное место.'
 ((FREE_BUILD_KB>=1048576)) || die "Для clean install нужно минимум 1 GiB свободно на filesystem $BUILD_ROOT; сейчас $((FREE_BUILD_KB/1024)) MB."
@@ -155,8 +153,6 @@ EOF
 
 confirm 'Начать установку с этими параметрами?' 'Y' || die 'Установка отменена пользователем до изменения системы.'
 
-# Warn about DNS before Caddy certificate provisioning. Do not expose password
-# or secret and do not mutate DNS automatically.
 for host in "$PUBLIC_HOST" "$WEB_HOST" "$WEBPROXY_HOST"; do
   resolved=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)
   if [[ -z "$resolved" ]]; then warn "DNS $host пока не разрешается."; elif [[ "$resolved" != "$PUBLIC_IP" ]]; then warn "DNS $host -> $resolved, ожидался $PUBLIC_IP."; else ok "DNS $host -> $PUBLIC_IP"; fi
@@ -164,8 +160,6 @@ done
 confirm 'Продолжить даже если выше были DNS WARN?' 'Y' || die 'Установка отменена для исправления DNS.'
 
 curl -fsSL --retry 3 "$ROOT/$BASE_COMMIT/install.sh" -o "$TMP/base-install.sh" || die 'Не удалось скачать базовый core installer.'
-# Make the immutable core use our pinned release fragments and accept explicitly
-# empty optional values without asking them a second time.
 python3 - "$TMP/base-install.sh" "$ROOT/$RELEASE_REF" <<'PY'
 from pathlib import Path
 import sys
