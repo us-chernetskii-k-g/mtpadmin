@@ -34,11 +34,12 @@ jobs:
       - name: Version, syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.14'
-          grep -q "VERSION='0.11.14'" install.sh
-          grep -q "VERSION='0.11.14'" update.sh
-          grep -q "VERSION='0.11.14'" web-install.sh
-          grep -q "BASE_01112_COMMIT='6b56d501c12dd7f13d1d21b76a320a5973336777'" update.sh
+          test "$(cat VERSION)" = '0.11.15'
+          grep -q "VERSION='0.11.15'" install.sh
+          grep -q "VERSION='0.11.15'" update.sh
+          grep -q "VERSION='0.11.15'" web-install.sh
+          grep -q "VERSION='0.11.15'" scripts/webproxy_install.sh
+          grep -q "BASE_01114_COMMIT='35fca2b4e41b8f7bce580aa22013df6cd3caea37'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' web-install.sh
@@ -101,7 +102,7 @@ jobs:
           print('Update Center routing PASS')
           PY
 
-      - name: WEB client UI and collector contract
+      - name: WEB client real-route UI and collector contract
         run: |
           python3 - <<'PY'
           import importlib.util
@@ -114,12 +115,57 @@ jobs:
           w.query=lambda *a,**kw:[]
           rows={r['username']:r for r in w.source_rows()}
           assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
-          html=w.active_clients_html(); assert '198.51.100.10' in html and '2001:db8::10' in html and '● WEB' in html
+          helper=w.active_clients_html()
+          assert '198.51.100.10' in helper and '2001:db8::10' in helper and '● WEB' in helper
+
+          # The production bug in 0.11.14 was only visible through this real
+          # analytics-plus route: it called a stale _a_active_clients_html hook.
+          sent=[]
+          w._x_online_card=lambda *a,**k:'<div>ONLINE</div>'
+          class H:
+              path='/active?range=6h'
+              def require_user(self): return True
+              def params(self): return {'range':'6h'}
+              def send_html(self,*a,**k): sent.append((a,k))
+          w._x_do_GET(H())
+          assert sent, 'real /active handler did not render'
+          route_body=sent[-1][0][1]
+          assert '198.51.100.10' in route_body and '2001:db8::10' in route_body
+          assert '● WEB' in route_body
+          assert 'WEB потоки' in route_body
+          assert 'TeleMT + WEB Proxy' in route_body
+          assert 'loopback-only telemetry tproxy-server' in route_body
+          print('WEB real /active route PASS')
+
           spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
           s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}; s._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}; s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           assert ('WEB_PROXY','198.51.100.10') in s.active_pairs()
-          print('WEB UI/collector PASS')
+          print('WEB collector PASS')
           PY
+
+      - name: WEB source runtime and public link contracts
+        run: |
+          set -euo pipefail
+          cat >/tmp/mtpadmin-web-source.toml <<'EOF'
+          [access.users]
+          "WEB_PROXY" = "00112233445566778899aabbccddeeff"
+          EOF
+          out=$(MTPADMIN_WEBPROXY_PROBE_CONFIG=/tmp/mtpadmin-web-source.toml MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh)
+          test "$out" = '1|00112233445566778899aabbccddeeff'
+
+          MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":true}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh
+          if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then
+            echo 'in_runtime=false incorrectly accepted' >&2; exit 1
+          fi
+          if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"OTHER","in_runtime":true}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then
+            echo 'wrong username incorrectly accepted' >&2; exit 1
+          fi
+          grep -q 'WEB_IDENTITY_BEFORE' update.sh
+          grep -q 'WEB_SECRET_HASH_BEFORE' update.sh
+          grep -q 'public link identity preserved' update.sh
+          grep -q 'Telemetry видит активный WEB IP, но /active его не отображает' update.sh
+          grep -q "_a_active_clients_html = active_clients_html" web/mtpadmin_web.d/44-webproxy-activity.py
+          echo 'WEB source runtime/link identity PASS'
 
       - name: Disk-backed telemetry contract
         run: |
@@ -163,6 +209,8 @@ jobs:
           git -C /tmp/tproxy-upstream fetch -q --depth=1 origin 52a5feb7fac38f68da5afef9cedd9b3bfc8473ca
           git -C /tmp/tproxy-upstream checkout -q --detach FETCH_HEAD
           MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE=/tmp/tproxy-upstream bash scripts/webproxy_telemetry_install.sh
+          grep -q 'request did not arrive through loopback proxy' /tmp/tproxy-upstream/internal/server/server.go
+          grep -q 'X-Forwarded-For' /tmp/tproxy-upstream/internal/server/server.go
           (cd /tmp/tproxy-upstream && go test ./... && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
 
       - name: Seamless updater transformation
@@ -176,10 +224,11 @@ jobs:
           grep -q 'свой Telegram Proxy с веб' README.md
           grep -q 'Новый Telegram WEB Proxy' README.md
           grep -q 'Update Center' README.md
+          grep -q 'Уже розданная ссылка Telegram WEB Proxy сохраняется' README.md
           grep -q 'curl -fsSL https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main/install.sh' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q '\*\*0.11.14\*\*' README.md
+          grep -q '\*\*0.11.15\*\*' README.md
 
       - name: Guard against production secrets
         run: |
