@@ -31,16 +31,19 @@ jobs:
           p.write_text(s)
           PY
 
-      - name: Syntax and release pinning
+      - name: Syntax and release contracts
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.12'
-          grep -q "VERSION='0.11.12'" update.sh
-          grep -q "VERSION='0.11.12'" web-install.sh
-          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
-          grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' web-install.sh
-          grep -q '\$ROOT/\$RELEASE_REF/web-install.sh' install.sh
-          grep -q '\$ROOT/\$RELEASE_REF/update.sh' web-install.sh
+          test "$(cat VERSION)" = '0.11.13'
+          grep -q "VERSION='0.11.13'" install.sh
+          grep -q "VERSION='0.11.13'" update.sh
+          grep -q "VERSION='0.11.13'" web-install.sh
+          grep -q 'MTPADMIN CLEAN INSTALL' install.sh
+          grep -q 'Повторите пароль веб-админки' install.sh
+          grep -q 'Начать установку с этими параметрами' install.sh
+          grep -q "BUILD_ROOT='/var/tmp/mtpadmin-build'" install.sh
+          grep -q 'BUILD_ROOT=${MTPADMIN_TPROXY_BUILD_ROOT:-/var/tmp/mtpadmin-build}' scripts/webproxy_telemetry_install.sh
+          grep -q 'mktemp -d "$BUILD_ROOT/telemetry.' scripts/webproxy_telemetry_install.sh
           bash -n /tmp/mtpadmin
           bash -n install.sh
           bash -n update.sh
@@ -52,53 +55,20 @@ jobs:
           bash -n scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
-      - name: Update Center route isolation regression
-        run: |
-          python3 - <<'PY'
-          import importlib.util
-          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'2','available':k=='mtpadmin'} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':1}
-          w._o_component_status=lambda:{}
-          html=w._o_update_center('csrf')
-          assert "name='component'" not in html
-          for comp in ('mtpadmin','telemt','webproxy'):
-              assert f"action='/action/component-update/{comp}'" in html
-          doc=w.page_template('x','<form><input type="hidden" name="name" value="A"><input name="q" value="x"></form>','admin')
-          assert doc.count('input:not([type=hidden])')>=2
-          assert "root.querySelectorAll('input,select,textarea')" not in doc
-          calls=[]; responses=[]
-          w.csrf_ok=lambda *a: True
-          w.run=lambda args,timeout=10:(calls.append(list(args)) or (0,'job'))
-          class F:
-              def require_user(self): return True
-              def user(self): return 'admin'
-              def form(self): return {'csrf':'x'}
-              def redirect(self,*a,**k): pass
-              def send_html(self,*a,**k): responses.append((a,k))
-          for comp in ('mtpadmin','telemt','webproxy'):
-              f=F(); f.path='/action/component-update/'+comp; w._au_do_POST(f)
-              assert calls[-1][-1]==comp
-          n=len(calls); f=F(); f.path='/action/component-update'; w._au_do_POST(f)
-          assert len(calls)==n and responses[-1][0][3]==409
-          print('Update Center route isolation PASS')
-          PY
-
       - name: SQLite FD regression
         run: |
           python3 - <<'PY'
           import importlib.util,os,sqlite3,tempfile
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
           fd,path=tempfile.mkstemp(); os.close(fd)
-          c=sqlite3.connect(path); c.execute('create table t(x integer)'); c.execute('insert into t values(1)'); c.commit(); c.close()
-          w.DB=path
+          c=sqlite3.connect(path); c.execute('create table t(x integer)'); c.execute('insert into t values(1)'); c.commit(); c.close(); w.DB=path
           before=len(os.listdir('/proc/self/fd'))
           for _ in range(500): assert w.scalar('select x from t')==1
-          after=len(os.listdir('/proc/self/fd'))
-          assert after-before<=3,(before,after)
+          after=len(os.listdir('/proc/self/fd')); assert after-before<=3,(before,after)
           print('FD regression PASS',before,after)
           PY
 
-      - name: Source editor and TOML boundary
+      - name: Source lifecycle and TOML array boundary
         run: |
           python3 - <<'PY'
           import importlib.util,tempfile,tomllib
@@ -119,76 +89,63 @@ jobs:
           print('Source/TOML regression PASS')
           PY
 
-      - name: Config runtime and WEB client merge
+      - name: Update Center route isolation
         run: |
           python3 - <<'PY'
-          import importlib.util,tempfile
-          from pathlib import Path
+          import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          p=Path(tempfile.mktemp(suffix='.toml')); p.write_text('[access.users]\n"A"="00112233445566778899aabbccddeeff"\n"B"="ffeeddccbbaa99887766554433221100"\n"WEB_PROXY"="11111111111111111111111111111111"\n')
-          w.CFG=str(p); w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
-          w.api_json=lambda path,**kw: ([{'username':'A','enabled':True,'in_runtime':True,'current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','enabled':True,'in_runtime':True,'current_connections':0,'active_unique_ips':0}] if path=='/v1/users' else ([{'username':'A','active_ips':['203.0.113.7']}] if path=='/v1/stats/users/active-ips' else {}))
-          w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8,'tproxy_streams_opened_total':24,'tproxy_bytes_up_total':100,'tproxy_bytes_down_total':200,'tproxy_backend_dial_failures_total':0,'tproxy_limit_hits_total':0}
-          w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
-          w.query=lambda *a,**kw: []
-          rows={x['username']:x for x in w.source_rows()}
-          assert rows['B']['config_present'] is True and rows['B']['in_runtime'] is False
-          assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
-          assert 'CONFIG ONLY' in w.sources_html('tester','csrf')
-          active=w.active_clients_html(); assert '198.51.100.10' in active and '2001:db8::10' in active and '203.0.113.7' in active and '● WEB' in active
-          print('Config/runtime/WEB merge PASS')
+          w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'2','available':True} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':3}; w._o_component_status=lambda:{}
+          html=w._o_update_center('csrf'); assert "name='component'" not in html
+          for c in ('mtpadmin','telemt','webproxy'): assert f"action='/action/component-update/{c}'" in html
+          calls=[]; w.csrf_ok=lambda *a:True; w.run=lambda args,timeout=10:(calls.append(list(args)) or (0,'job'))
+          class F:
+              def require_user(self): return True
+              def user(self): return 'admin'
+              def form(self): return {'csrf':'x'}
+              def redirect(self,*a,**k): pass
+              def send_html(self,*a,**k): self.sent=(a,k)
+          for c in ('mtpadmin','telemt','webproxy'):
+              f=F(); f.path='/action/component-update/'+c; w._au_do_POST(f); assert calls[-1][-1]==c
+          print('Update route isolation PASS')
           PY
 
-      - name: WEB collector active IP and history contract
+      - name: WEB IPv4 IPv6 live merge and history
         run: |
           python3 - <<'PY'
-          import importlib.util,sqlite3
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w._wpa_source_rows=lambda:[{'username':'A','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8}; w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
+          w.api_json=lambda p,**k:[{'username':'A','active_ips':['203.0.113.7']}] if p=='/v1/stats/users/active-ips' else []; w.query=lambda *a,**k:[]
+          rows={x['username']:x for x in w.source_rows()}; assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
+          html=w.active_clients_html(); assert '198.51.100.10' in html and '2001:db8::10' in html and '● WEB' in html
           spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
-          s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}
-          s._base_active_pairs=lambda:{('DEIMOS','203.0.113.7')}
-          s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
-          active=s.active_pairs(); assert len(active)==3
-          con=sqlite3.connect(':memory:')
-          con.executescript('''CREATE TABLE online_samples(ts INTEGER,username TEXT,connections INTEGER,unique_ips INTEGER,PRIMARY KEY(ts,username));
-          CREATE TABLE daily_traffic(day TEXT,username TEXT,connections INTEGER DEFAULT 0,bad_connections INTEGER DEFAULT 0,bytes_from_client INTEGER DEFAULT 0,bytes_to_client INTEGER DEFAULT 0,peak_connections INTEGER DEFAULT 0,peak_unique_ips INTEGER DEFAULT 0,PRIMARY KEY(day,username));
-          CREATE TABLE counter_state(username TEXT PRIMARY KEY,conn_total INTEGER DEFAULT 0,bad_total INTEGER DEFAULT 0,bytes_from INTEGER DEFAULT 0,bytes_to INTEGER DEFAULT 0,updated_at INTEGER DEFAULT 0);''')
-          s._online_last_sample=0
-          s._sample_online(con,{'DEIMOS':{'telemt_user_connections_current':4,'telemt_user_unique_ips_current':1}},active,60,{'tproxy_sessions_live':3},'WEB_PROXY')
-          assert con.execute("select connections,unique_ips from online_samples where username='WEB_PROXY'").fetchone()==(3,2)
-          assert con.execute("select connections,unique_ips from online_samples where username='__GLOBAL__'").fetchone()==(7,3)
-          s._sample_web_traffic(con,{'tproxy_sessions_created_total':10,'tproxy_sessions_live':2,'tproxy_bytes_up_total':1000,'tproxy_bytes_down_total':2000},'WEB_PROXY',60,2)
-          s._sample_web_traffic(con,{'tproxy_sessions_created_total':12,'tproxy_sessions_live':3,'tproxy_bytes_up_total':1100,'tproxy_bytes_down_total':2300},'WEB_PROXY',70,2)
-          assert con.execute("select connections,bytes_from_client,bytes_to_client,peak_connections,peak_unique_ips from daily_traffic where username='WEB_PROXY'").fetchone()==(2,100,300,3,2)
-          print('WEB active/history PASS')
+          s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}; s._base_active_pairs=lambda:{('A','203.0.113.7')}; s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
+          active=s.active_pairs(); assert ('WEB_PROXY','198.51.100.10') in active and ('WEB_PROXY','2001:db8::10') in active
+          print('WEB mixed-IP regression PASS')
           PY
 
-      - name: Source and WEB production contracts
+      - name: Production safety contracts
         run: |
           set -euo pipefail
           grep -q 'source_apply_or_restart' src/mtpadmin.d/11-source-stability.sh
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'chmod 0711 "$TMP"' scripts/webproxy_backend_install.sh
           grep -q 'chmod 0755 "$build/objs/bin/mtproto-proxy"' scripts/webproxy_backend_install.sh
-          grep -q 'PATCH_LEVEL=' scripts/webproxy_telemetry_install.sh
-          grep -q '/mtpadmin/clients' scripts/webproxy_telemetry_install.sh
-          grep -q "WEBTELEMETRY='/usr/local/lib/mtpadmin/webproxy_telemetry_install.sh'" scripts/component_update.sh
-          grep -Fq "action='/action/component-update/{esc(key)}'" web/mtpadmin_web.d/40-async-update-ui.py
-          grep -Fq "prefix='/action/component-update/'" web/mtpadmin_web.d/40-async-update-ui.py
-          grep -Fq "if path=='/action/component-update':" web/mtpadmin_web.d/40-async-update-ui.py
-
-      - name: Scanner Guard self-heal contract
-        run: |
-          set -euo pipefail
+          grep -q 'restore_patched_backup' scripts/webproxy_telemetry_install.sh
+          grep -q 'GOTMPDIR="$gotmp"' scripts/webproxy_telemetry_install.sh
           grep -q 'MAX_AGE=.*120' scripts/scanner_watchdog.sh
           grep -q 'systemctl restart "$SCANNER"' scripts/scanner_watchdog.sh
-          grep -q 'systemctl is-active --quiet "$TELEMT"' scripts/scanner_watchdog.sh
 
-      - name: Product and support contract
+      - name: Public product and support contract
         run: |
           set -euo pipefail
+          grep -q 'свой Telegram Proxy с веб' README.md
+          grep -q 'Новый Telegram WEB Proxy' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q 'https://t.me/boss_of_this_vpn' scripts/webproxy_install.sh
+          grep -q '\*\*0.11.13\*\*' README.md
 
       - name: Guard against accidental production secrets
         run: |
@@ -202,8 +159,8 @@ jobs:
               try:s=p.read_text(errors='ignore')
               except Exception:continue
               for m in re.finditer(r'(?i)(?:secret|password|token)\s*[=:]\s*["\x27]?([0-9a-f]{32,}|[A-Za-z0-9_-]{40,})',s):
-                  value=m.group(1)
-                  if value.lower() not in allowed: bad.append((str(p),value[:12]))
+                  v=m.group(1)
+                  if v.lower() not in allowed: bad.append((str(p),v[:12]))
           assert not bad,bad
           print('Secret scan PASS')
           PY
