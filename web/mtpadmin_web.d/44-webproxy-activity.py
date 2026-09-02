@@ -1,4 +1,4 @@
-# MTPADMIN 0.11.11 WEB Proxy live-activity layer.
+# MTPADMIN 0.11.15 WEB Proxy live-activity layer.
 # tproxy-server is outside TeleMT. MTPADMIN's patched loopback admin endpoint
 # exposes only active client IP + session count; no tokens, capabilities or
 # request/query logs are exported.
@@ -151,3 +151,11 @@ def active_clients_html():
     note="""<div class='card' style='margin-top:14px'><h2>Активные клиенты сейчас</h2><div class='muted'>Обычные MTProto-клиенты берутся из live API TeleMT, WEB-клиенты — из loopback-only telemetry tproxy-server. WEB endpoint отдаёт только IP и число активных carrier-сессий; capability, secret и URL запросов не журналируются. История IP хранится по общему retention MTPADMIN.</div></div>"""
     body=table(['','Источник','IP','CC','Город','ASN','Провайдер / сеть','Соед. источника','Первый','Последний','Guard'],rows)
     return cards+note+"<div class='card' style='margin-top:14px'>"+body+"</div>"
+
+
+# analytics-plus owns the real /active HTTP route and intentionally calls the
+# pre-analytics snapshot named _a_active_clients_html. Rebind that hook after
+# this extension loads, otherwise the new renderer exists in the assembled
+# file but the browser still receives the old TeleMT-only page.
+if '_a_active_clients_html' in globals():
+    _a_active_clients_html = active_clients_html
