@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.12-hotfix1'
+VERSION='0.11.12-hotfix2'
 PATCH_LEVEL='mtpadmin-client-telemetry-v1'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 TPROXY_MARKER='/usr/local/lib/mtpadmin/tproxy-server.commit'
@@ -13,7 +13,10 @@ TPROXY_PROFILES='/etc/tproxy-server/profiles.json'
 BINARY='/usr/local/bin/tproxy-server'
 ADMIN='http://127.0.0.1:8081'
 MIN_BUILD_FREE_KB=${MTPADMIN_TPROXY_BUILD_MIN_FREE_KB:-524288}
-TMP=$(mktemp -d)
+BUILD_ROOT=${MTPADMIN_TPROXY_BUILD_ROOT:-/var/tmp/mtpadmin-build}
+install -d -m 0700 -o root -g root "$BUILD_ROOT"
+find "$BUILD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'telemetry.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true
+TMP=$(mktemp -d "$BUILD_ROOT/telemetry.XXXXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 chmod 0755 "$TMP"
 
@@ -102,7 +105,8 @@ restore_patched_backup(){
 if restore_patched_backup; then ok "WEB client telemetry восстановлена из backup без Go build: ${commit:0:12}"; exit 0; fi
 
 command -v git >/dev/null 2>&1 || die 'git не найден.'; id tproxy >/dev/null 2>&1 || die 'System user tproxy не найден.'; resolve_go
-free_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}'); [[ "$free_kb" =~ ^[0-9]+$ ]] || die 'Не удалось определить свободное место.'
+free_kb=$(df -Pk "$TMP" | awk 'NR==2{print $4}'); [[ "$free_kb" =~ ^[0-9]+$ ]] || die 'Не удалось определить свободное место build filesystem.'
+info "WEB telemetry build filesystem: $(df -P "$TMP" | awk 'NR==2{print $1}') · свободно $((free_kb/1024)) MB"
 (( free_kb >= MIN_BUILD_FREE_KB )) || die "Недостаточно места для безопасной сборки WEB telemetry: свободно $((free_kb/1024)) MB, требуется не менее $((MIN_BUILD_FREE_KB/1024)) MB. Текущий relay оставлен без изменений."
 
 src="$TMP/tproxy-server"; buildhome="$TMP/buildhome"; gotmp="$buildhome/gotmp"
@@ -110,7 +114,7 @@ git init -q "$src"; git -C "$src" remote add origin "$TPROXY_REPO"; git -C "$src
 [[ "$(git -C "$src" rev-parse HEAD)" == "$commit" ]] || die 'Не удалось получить установленный upstream commit.'
 patch_source "$src"
 install -d -o tproxy -g tproxy -m 0700 "$buildhome" "$gotmp"; chown -R tproxy:tproxy "$src" "$buildhome"
-info "Собираю tproxy-server ${commit:0:12} + WEB client telemetry (disk-safe mode)..."
+info "Собираю tproxy-server ${commit:0:12} + WEB client telemetry (disk-backed mode)..."
 (cd "$src" && runuser -u tproxy -- env HOME="$buildhome" TMPDIR="$gotmp" GOTMPDIR="$gotmp" GOCACHE="$buildhome/gocache" GOMODCACHE="$buildhome/gomod" GOMAXPROCS=1 GOTOOLCHAIN=local sh -c 'umask 022; exec "$@"' sh "$go_binary" build -p=1 -trimpath -ldflags='-s -w' -o "$buildhome/tproxy-server.bin" ./cmd/tproxy-server)
 chmod 0755 "$buildhome/tproxy-server.bin"; "$buildhome/tproxy-server.bin" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null || die 'Telemetry build не принял production config.'
 
