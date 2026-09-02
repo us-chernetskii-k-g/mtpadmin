@@ -144,7 +144,7 @@ set_webproxy_host(){
 update_mtpadmin(){
   COMPONENT='mtpadmin'; acquire_lock; log_status "$COMPONENT" running 'Определяю проверенный commit MTPADMIN main'
   TMP=$(mktemp -d)
-  local sha version
+  local sha version applied
   sha=$(curl -fsSL --retry 3 "$REPO_API/branches/main" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))')
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || die 'Не удалось определить commit main'
   curl -fsSL --retry 3 "$REPO_API/contents/VERSION?ref=$sha" | python3 -c 'import base64,json,sys; d=json.load(sys.stdin); print(base64.b64decode(d["content"]).decode().strip())' > "$TMP/version"
@@ -153,7 +153,16 @@ update_mtpadmin(){
   curl -fsSL --retry 3 "$RAW/$sha/update.sh" -o "$TMP/update.sh" || die 'Не удалось скачать commit-pinned update.sh'
   chmod 0700 "$TMP/update.sh"; bash -n "$TMP/update.sh" || die 'update.sh syntax invalid'
   grep -q "VERSION='$version'" "$TMP/update.sh" || die 'Версия commit-pinned updater не совпадает с Update Center'
-  MTPADMIN_RELEASE_REF="$sha" bash "$TMP/update.sh"
+  if ! MTPADMIN_RELEASE_REF="$sha" bash "$TMP/update.sh"; then
+    applied=''
+    if [[ -f "$STATE" ]]; then
+      applied=$(awk -F= '/^MTPADMIN_VERSION=/{gsub(/[\x27\x22]/,"",$2);print $2}' "$STATE" | tail -1)
+    fi
+    if [[ "$applied" == "$version" ]]; then
+      die "MTPADMIN $version уже применён, но post-update validation/repair не завершился. Основные сервисы оставлены в текущем состоянии; повторите после исправления причины."
+    fi
+    die "MTPADMIN $version не завершил обновление; post-update installer rc!=0."
+  fi
   [[ -x "$CHECKER" ]] && "$CHECKER" >/dev/null 2>&1 || true
   /usr/local/bin/mtpadmin doctor >/dev/null || die 'MTPADMIN обновился, но doctor не прошёл'
   log_status "$COMPONENT" success "MTPADMIN обновлён до $version · ${sha:0:12}"
