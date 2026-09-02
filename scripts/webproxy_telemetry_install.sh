@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.11.12-hotfix2'
+VERSION='0.11.13'
 PATCH_LEVEL='mtpadmin-client-telemetry-v1'
 TPROXY_REPO='https://github.com/telegramdesktop/tproxy-server.git'
 TPROXY_MARKER='/usr/local/lib/mtpadmin/tproxy-server.commit'
@@ -12,13 +12,11 @@ TPROXY_CFG='/etc/tproxy-server/config.json'
 TPROXY_PROFILES='/etc/tproxy-server/profiles.json'
 BINARY='/usr/local/bin/tproxy-server'
 ADMIN='http://127.0.0.1:8081'
-MIN_BUILD_FREE_KB=${MTPADMIN_TPROXY_BUILD_MIN_FREE_KB:-524288}
+MIN_BUILD_FREE_KB=${MTPADMIN_TPROXY_BUILD_MIN_FREE_KB:-786432}
 BUILD_ROOT=${MTPADMIN_TPROXY_BUILD_ROOT:-/var/tmp/mtpadmin-build}
-install -d -m 0700 -o root -g root "$BUILD_ROOT"
-find "$BUILD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'telemetry.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true
-TMP=$(mktemp -d "$BUILD_ROOT/telemetry.XXXXXXXX")
-trap 'rm -rf "$TMP"' EXIT
-chmod 0755 "$TMP"
+TMP=''
+cleanup(){ [[ -z "${TMP:-}" || ! -d "$TMP" ]] || rm -rf "$TMP"; }
+trap cleanup EXIT
 
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
@@ -67,12 +65,25 @@ PY
   grep -q '/mtpadmin/clients' "$src/internal/server/server.go" || die 'Telemetry admin endpoint patch не применился.'
 }
 
+# CI/developer mode deliberately exits before any root-only filesystem or
+# systemd work. It compile-tests the exact source patch against pinned upstream.
 if [[ -n "${MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE:-}" ]]; then
-  resolve_go; patch_source "$MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"; ok "Telemetry source patch PASS: $MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"; exit 0
+  resolve_go
+  patch_source "$MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"
+  ok "Telemetry source patch PASS: $MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE"
+  exit 0
 fi
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'WEB telemetry installer требует root.'
 [[ -x "$BINARY" && -f "$TPROXY_MARKER" && -f "$TPROXY_CFG" && -f "$TPROXY_PROFILES" ]] || die 'Сначала установите Telegram WEB Proxy.'
+
+# Production build state is always disk-backed. Never let Go use a small /tmp
+# tmpfs for source, module cache, build cache or GOTMPDIR.
+install -d -m 0700 -o root -g root "$BUILD_ROOT"
+find "$BUILD_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'telemetry.*' -mtime +1 -exec rm -rf -- {} + 2>/dev/null || true
+TMP=$(mktemp -d "$BUILD_ROOT/telemetry.XXXXXXXX")
+chmod 0755 "$TMP"
+
 commit=$(tr -d '\r\n' < "$TPROXY_MARKER"); [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die 'Некорректный установленный commit tproxy-server.'
 expected_marker="$commit|$PATCH_LEVEL"
 
