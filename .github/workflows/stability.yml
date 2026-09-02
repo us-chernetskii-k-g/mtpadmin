@@ -34,10 +34,12 @@ jobs:
       - name: Syntax and release contracts
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.11.14'
-          grep -q "VERSION='0.11.14'" install.sh
-          grep -q "VERSION='0.11.14'" update.sh
-          grep -q "VERSION='0.11.14'" web-install.sh
+          test "$(cat VERSION)" = '0.11.15'
+          grep -q "VERSION='0.11.15'" install.sh
+          grep -q "VERSION='0.11.15'" update.sh
+          grep -q "VERSION='0.11.15'" web-install.sh
+          grep -q "VERSION='0.11.15'" scripts/webproxy_install.sh
+          grep -q "BASE_01114_COMMIT='35fca2b4e41b8f7bce580aa22013df6cd3caea37'" update.sh
           grep -q 'MTPADMIN CLEAN INSTALL' install.sh
           grep -q 'Повторите пароль веб-админки' install.sh
           grep -q 'Начать установку с этими параметрами' install.sh
@@ -112,7 +114,7 @@ jobs:
           print('Update route isolation PASS')
           PY
 
-      - name: WEB IPv4 IPv6 live merge and history
+      - name: WEB browser route IPv4 IPv6 live merge and history
         run: |
           python3 - <<'PY'
           import importlib.util
@@ -123,11 +125,34 @@ jobs:
           w.api_json=lambda p,**k:[{'username':'A','active_ips':['203.0.113.7']}] if p=='/v1/stats/users/active-ips' else []; w.query=lambda *a,**k:[]
           rows={x['username']:x for x in w.source_rows()}; assert rows['WEB_PROXY']['current_connections']==3 and rows['WEB_PROXY']['active_unique_ips']==2
           html=w.active_clients_html(); assert '198.51.100.10' in html and '2001:db8::10' in html and '● WEB' in html
+          sent=[]; w._x_online_card=lambda *a,**k:'<div>ONLINE</div>'
+          class H:
+              path='/active?range=6h'
+              def require_user(self): return True
+              def params(self): return {'range':'6h'}
+              def send_html(self,*a,**k): sent.append((a,k))
+          w._x_do_GET(H())
+          route=sent[-1][0][1]
+          assert '198.51.100.10' in route and '2001:db8::10' in route and '● WEB' in route
+          assert 'WEB потоки' in route and 'TeleMT + WEB Proxy' in route and 'loopback-only telemetry tproxy-server' in route
           spec=importlib.util.spec_from_file_location('s','/tmp/stats.py'); s=importlib.util.module_from_spec(spec); spec.loader.exec_module(s)
           s.state=lambda:{'WEBPROXY_SOURCE':'WEB_PROXY'}; s._base_active_pairs=lambda:{('A','203.0.113.7')}; s._tproxy_client_rows=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           active=s.active_pairs(); assert ('WEB_PROXY','198.51.100.10') in active and ('WEB_PROXY','2001:db8::10') in active
-          print('WEB mixed-IP regression PASS')
+          print('WEB real-route mixed-IP regression PASS')
           PY
+
+      - name: WEB runtime-source and public-link identity contracts
+        run: |
+          set -euo pipefail
+          MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":true}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh
+          if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then exit 1; fi
+          grep -q 'x.get("in_runtime") is True' scripts/webproxy_install.sh
+          grep -q 'WEB_IDENTITY_BEFORE' update.sh
+          grep -q 'WEB_SECRET_HASH_AFTER' update.sh
+          grep -q 'public link identity preserved' update.sh
+          grep -q 'WEB потоки' update.sh
+          grep -q 'Telemetry видит активный WEB IP, но /active его не отображает' update.sh
+          grep -q '_a_active_clients_html = active_clients_html' web/mtpadmin_web.d/44-webproxy-activity.py
 
       - name: Production safety contracts
         run: |
@@ -146,9 +171,10 @@ jobs:
           set -euo pipefail
           grep -q 'свой Telegram Proxy с веб' README.md
           grep -q 'Новый Telegram WEB Proxy' README.md
+          grep -q 'Уже розданная ссылка Telegram WEB Proxy сохраняется' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q '\*\*0.11.14\*\*' README.md
+          grep -q '\*\*0.11.15\*\*' README.md
 
       - name: Guard against accidental production secrets
         run: |
