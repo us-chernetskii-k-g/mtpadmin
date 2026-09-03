@@ -13,14 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Assemble full web runtime with public UI
+      - name: Assemble production web runtime
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           p=Path('/tmp/web.py')
           base=('00-core.py','10-ui.py','20-pages.py','30-actions.py')
-          ext=('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-client-ui.py')
+          ext=('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py')
           s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in base)
           marker="if __name__=='__main__': main()"
           assert s.count(marker)==1
@@ -34,12 +34,14 @@ jobs:
       - name: Public shell and responsive contracts
         run: |
           set -euo pipefail
-          grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/45-client-ui.py
-          grep -q 'grid-template-columns:236px' web/mtpadmin_web.d/45-client-ui.py
-          grep -q '@media(max-width:760px)' web/mtpadmin_web.d/45-client-ui.py
-          grep -q 'Сообщество' web/mtpadmin_web.d/45-client-ui.py
-          grep -q 'github.com/us-chernetskii-k-g/mtpadmin' web/mtpadmin_web.d/45-client-ui.py
-          grep -q '©' web/mtpadmin_web.d/45-client-ui.py
+          UI=web/mtpadmin_web.d/44-webproxy-activity.py
+          grep -q 'mtpadmin-client-ui' "$UI"
+          grep -q 'grid-template-columns:236px' "$UI"
+          grep -q '@media(max-width:760px)' "$UI"
+          grep -q 'Сообщество' "$UI"
+          grep -q 'github.com/us-chernetskii-k-g/mtpadmin' "$UI"
+          grep -q '©' "$UI"
+          grep -q 'Технические сведения спрятаны отдельно' "$UI"
 
       - name: Render public pages
         run: |
@@ -87,5 +89,6 @@ jobs:
           w.query=lambda *a,**k:[]
           html=w.active_clients_html()
           assert '198.51.100.10' in html and 'WEB_PROXY' in html and 'WEB потоки' in html
+          assert 'Обычные MTProto-клиенты и WEB-клиенты показываются в одном списке' in html
           print('Existing active route PASS')
           PY
