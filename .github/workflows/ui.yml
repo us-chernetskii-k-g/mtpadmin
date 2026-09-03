@@ -38,6 +38,7 @@ jobs:
           grep -q '@media(max-width:760px)' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q 'github.com/us-chernetskii-k-g/mtpadmin' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q '_UI_LOOP_OBSERVER' web/mtpadmin_web.d/45-ui-loop-fix.py
+          grep -q '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q 'self-triggering MutationObserver disabled' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q '_PWA_MANIFEST' web/mtpadmin_web.d/46-pwa.py
           grep -q 'beforeinstallprompt' web/mtpadmin_web.d/46-pwa.py
@@ -50,8 +51,8 @@ jobs:
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.2'
-          w.state=lambda:{'PROFILE':'MAIN','PUBLIC_HOST':'proxy.example.com','PORT':'8443','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.2','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w.VERSION='0.12.3'
+          w.state=lambda:{'PROFILE':'MAIN','PUBLIC_HOST':'proxy.example.com','PORT':'8443','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.3','WEBPROXY_SOURCE':'WEB_PROXY'}
           w.query=lambda *a,**k:[]
           w.scalar=lambda *a,**k:0
           w._o_service=lambda *a:True
@@ -68,13 +69,12 @@ jobs:
           dash=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
           assert 'Сервис работает стабильно' in dash
           assert 'mtpadmin-client-ui' in dash
-          assert 'self-triggering MutationObserver disabled' in dash
+          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in dash
           dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
           assert dangerous not in dash
           assert 'manifest.webmanifest' in dash and 'id="m-pwa-sheet"' in dash
           assert 'Установить MTPADMIN' in dash and 'Продолжить в браузере' in dash
           assert "navigator.serviceWorker.register('/mtpadmin-sw.js'" in dash
-          # Re-rendering must remain deterministic and must not reintroduce the observer.
           dash2=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
           assert dangerous not in dash2 and dash2.count('id="m-pwa-sheet"')==1
 
@@ -106,7 +106,7 @@ jobs:
           html=w.active_clients_html()
           assert '198.51.100.10' in html and 'WEB_PROXY' in html and 'WEB потоки' in html
           shell=w.page_template('Активные',html,'admin','active')
-          assert 'self-triggering MutationObserver disabled' in shell
+          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in shell
           assert 'new MutationObserver(enhance).observe' not in shell
           assert 'manifest.webmanifest' in shell
           print('Active route PASS')
