@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.12.1'
+VERSION='0.12.2'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
