@@ -20,7 +20,7 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/web.py')
           base=('00-core.py','10-ui.py','20-pages.py','30-actions.py')
-          ext=('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py')
+          ext=('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py','47-dashboard-route-fix.py','48-browser-stability.py')
           s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in base)
           marker="if __name__=='__main__': main()"
           assert s.count(marker)==1
@@ -31,28 +31,30 @@ jobs:
           PY
           python3 -m py_compile /tmp/web.py
 
-      - name: Responsive UI and install contracts
+      - name: Responsive UI and stability contracts
         run: |
           set -euo pipefail
           grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q '@media(max-width:760px)' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q 'github.com/us-chernetskii-k-g/mtpadmin' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q '_UI_LOOP_OBSERVER' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' web/mtpadmin_web.d/45-ui-loop-fix.py
-          grep -q 'self-triggering MutationObserver disabled' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q '_PWA_MANIFEST' web/mtpadmin_web.d/46-pwa.py
           grep -q 'beforeinstallprompt' web/mtpadmin_web.d/46-pwa.py
           grep -q 'Продолжить в браузере' web/mtpadmin_web.d/46-pwa.py
-          grep -q '14\*24\*60\*60\*1000' web/mtpadmin_web.d/46-pwa.py
+          grep -q '_a_dashboard_html = dashboard_html' web/mtpadmin_web.d/47-dashboard-route-fix.py
+          grep -q '_BS_REPLACEMENTS' web/mtpadmin_web.d/48-browser-stability.py
+          grep -q 'background full-page live refresh disabled' web/mtpadmin_web.d/48-browser-stability.py
+          grep -q 'compact-ui MutationObserver disabled' web/mtpadmin_web.d/48-browser-stability.py
+          grep -q 'world-map MutationObserver disabled' web/mtpadmin_web.d/48-browser-stability.py
 
-      - name: Render pages without browser render loop
+      - name: Render long-lived pages without background DOM churn
         run: |
           python3 - <<'PY'
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.3'
-          w.state=lambda:{'PROFILE':'MAIN','PUBLIC_HOST':'proxy.example.com','PORT':'8443','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.3','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w.VERSION='0.12.4'
+          w.state=lambda:{'PROFILE':'MAIN','PUBLIC_HOST':'proxy.example.com','PORT':'8443','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.4','WEBPROXY_SOURCE':'WEB_PROXY'}
           w.query=lambda *a,**k:[]
           w.scalar=lambda *a,**k:0
           w._o_service=lambda *a:True
@@ -65,18 +67,26 @@ jobs:
           w._o_webproxy_link=lambda:'https://t.me/webproxy?server=webproxy.example.com&secret=test'
           w._o_qr=lambda link:''
           w.source_rows=lambda:[{'username':'MAIN','enabled':True,'current_connections':7,'active_unique_ips':3,'total_octets':1024},{'username':'WEB_PROXY','enabled':True,'current_connections':1,'active_unique_ips':1,'total_octets':2048}]
+          w._wm_ensure=lambda:False
+
+          assert w._a_dashboard_html is w.dashboard_html, 'real / route still points at stale dashboard renderer'
+          assert w._a_active_clients_html is w.active_clients_html, 'real /active route still points at stale renderer'
+
+          def stable(html,label):
+              assert 'mtpadmin-client-ui' in html, label
+              assert 'new MutationObserver(' not in html, label+' still has MutationObserver'
+              assert 'setInterval(' not in html, label+' still has setInterval'
+              assert 'MTPADMIN 0.12.4: background full-page live refresh disabled' in html, label+' missing live-refresh guard'
+              assert '● по запросу' in html, label+' still advertises background cadence'
+              assert 'manifest.webmanifest' in html, label+' lost PWA'
 
           dash=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
-          assert 'Сервис работает стабильно' in dash
-          assert 'mtpadmin-client-ui' in dash
-          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in dash
-          dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
-          assert dangerous not in dash
-          assert 'manifest.webmanifest' in dash and 'id="m-pwa-sheet"' in dash
+          stable(dash,'dashboard')
+          assert 'Сервис работает стабильно' in dash and 'Быстрые действия' in dash
           assert 'Установить MTPADMIN' in dash and 'Продолжить в браузере' in dash
-          assert "navigator.serviceWorker.register('/mtpadmin-sw.js'" in dash
           dash2=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
-          assert dangerous not in dash2 and dash2.count('id="m-pwa-sheet"')==1
+          stable(dash2,'dashboard second render')
+          assert dash2.count('id="m-pwa-sheet"')==1
 
           manifest=json.loads(w._PWA_MANIFEST.decode())
           assert manifest['display']=='standalone' and manifest['start_url']=='/?pwa=1'
@@ -86,9 +96,13 @@ jobs:
           assert 'caches.' not in sw
 
           ops=w.page_template('Операции',w._o_operations_html('admin','csrf'),'admin','operations')
+          stable(ops,'operations')
           assert 'Управление сервисом' in ops and 'Для специалистов' in ops
-          assert dangerous not in ops and 'm-pwa-sheet' in ops
-          print('UI + mobile install regression PASS')
+
+          geo=w.page_template('География',"<div id='world-map'></div>",'admin','geo')
+          stable(geo,'geo')
+          assert 'world-map' in geo
+          print('Long-lived browser stability regression PASS')
           PY
 
       - name: Active WEB clients remain intact
@@ -97,6 +111,7 @@ jobs:
           import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py')
           w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.VERSION='0.12.4'
           w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
           w._wpa_source_rows=lambda:[{'username':'A','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
           w._wpa_metrics=lambda:{'tproxy_sessions_live':1,'tproxy_streams_live':8}
@@ -106,8 +121,9 @@ jobs:
           html=w.active_clients_html()
           assert '198.51.100.10' in html and 'WEB_PROXY' in html and 'WEB потоки' in html
           shell=w.page_template('Активные',html,'admin','active')
-          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in shell
-          assert 'new MutationObserver(enhance).observe' not in shell
+          assert 'new MutationObserver(' not in shell
+          assert 'setInterval(' not in shell
           assert 'manifest.webmanifest' in shell
+          assert 'MTPADMIN 0.12.4: background full-page live refresh disabled' in shell
           print('Active route PASS')
           PY
