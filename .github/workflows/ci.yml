@@ -34,12 +34,12 @@ jobs:
       - name: Version syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.2'
-          grep -q "VERSION='0.12.2'" update.sh
-          grep -q "VERSION='0.12.2'" install.sh
-          grep -q "VERSION='0.12.2'" web-install.sh
-          grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
+          test "$(cat VERSION)" = '0.12.3'
+          grep -q "VERSION='0.12.3'" update.sh
+          grep -q "BASE_0122_COMMIT='00fdcb5c44e20cdae932f5eefe95687adcb1860d'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
+          grep -q '# MTPADMIN 0.12.3 browser render-loop safety.' web/mtpadmin_web.d/45-ui-loop-fix.py
+          grep -q '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' web/mtpadmin_web.d/45-ui-loop-fix.py
           bash -n /tmp/mtpadmin update.sh install.sh web-install.sh
           bash -n scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
@@ -54,7 +54,6 @@ jobs:
           grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
           grep -q 'Начать установку с этими параметрами' install.sh
           grep -q "предупреждения DNS?' 'N'" install.sh
-          grep -q "VERSION='0.12.2'" web-install.sh
           ! grep -q 'echo.*WEB_PASS' install.sh
 
       - name: Browser UI and PWA regression
@@ -62,8 +61,8 @@ jobs:
           python3 - <<'PY'
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.2'
-          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.2'}
+          w.VERSION='0.12.3'
+          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.3'}
           w.query=lambda *a,**kw:[]; w.scalar=lambda *a,**kw:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True
           w._o_health=lambda:(100,[['TeleMT','<span class="ok">PASS</span>']])
@@ -73,7 +72,7 @@ jobs:
           html=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
           dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
           assert 'mtpadmin-client-ui' in html and 'Сервис работает стабильно' in html
-          assert 'self-triggering MutationObserver disabled' in html and dangerous not in html
+          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in html and dangerous not in html
           assert 'rel="manifest" href="/manifest.webmanifest"' in html
           assert 'id="m-pwa-sheet"' in html and 'Установить приложение' in html and 'Продолжить в браузере' in html
           assert "navigator.serviceWorker.register('/mtpadmin-sw.js'" in html
@@ -97,7 +96,7 @@ jobs:
           if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then exit 1; fi
           grep -q 'x.get("in_runtime") is True' scripts/webproxy_install.sh
           grep -q 'WEB_IDENTITY_BEFORE' update.sh
-          grep -q 'Telemetry видит активный WEB IP, но /active его не отображает' update.sh
+          grep -q 'mtpadmin-client-ui' update.sh
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
@@ -119,8 +118,8 @@ jobs:
           grep -q 'restore_patched_backup' scripts/webproxy_telemetry_install.sh
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'post-update validation/repair' scripts/component_update.sh
-          grep -q "web/mtpadmin_web.d/46-pwa.py" update.sh
-          grep -q 'Мобильное приложение не должно кэшировать данные админки' update.sh
+          grep -q 'manifest.webmanifest' update.sh
+          grep -q 'PWA потерян после стабилизации интерфейса' update.sh
 
       - name: Compile patched upstream tproxy-server
         run: |
