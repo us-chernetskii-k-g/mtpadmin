@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -34,11 +34,14 @@ jobs:
       - name: Syntax and release contracts
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.1'
-          grep -q "VERSION='0.12.1'" update.sh
+          test "$(cat VERSION)" = '0.12.2'
+          grep -q "VERSION='0.12.2'" update.sh
+          grep -q "VERSION='0.12.2'" install.sh
+          grep -q "VERSION='0.12.2'" web-install.sh
           grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q '_UI_LOOP_OBSERVER' web/mtpadmin_web.d/45-ui-loop-fix.py
+          grep -q '_PWA_MANIFEST' web/mtpadmin_web.d/46-pwa.py
           bash -n /tmp/mtpadmin update.sh install.sh web-install.sh scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
@@ -76,13 +79,13 @@ jobs:
           print('Source lifecycle PASS')
           PY
 
-      - name: Responsive routes and render-loop safety
+      - name: Responsive routes PWA and render-loop safety
         run: |
           python3 - <<'PY'
-          import importlib.util
+          import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.1'
-          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.1'}
+          w.VERSION='0.12.2'
+          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.2'}
           w.query=lambda *a,**k:[]; w.scalar=lambda *a,**k:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True; w._o_health=lambda:(100,[['TeleMT','PASS']])
           w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'1','available':False} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':0}
@@ -94,6 +97,11 @@ jobs:
           shell=w.page_template('Активные',helper,'admin','active')
           dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
           assert 'mtp-modern' in shell and 'self-triggering MutationObserver disabled' in shell and dangerous not in shell
+          assert 'manifest.webmanifest' in shell and 'm-pwa-sheet' in shell and 'Продолжить в браузере' in shell
+          manifest=json.loads(w._PWA_MANIFEST.decode())
+          assert manifest['display']=='standalone' and manifest['scope']=='/'
+          assert w._pwa_icon_png(192).startswith(b'\x89PNG') and w._pwa_icon_png(512).startswith(b'\x89PNG')
+          assert 'caches.' not in w._PWA_SW.decode()
           sent=[]; w._x_online_card=lambda *a,**k:'ONLINE'
           class H:
               path='/active?range=6h'
@@ -102,7 +110,7 @@ jobs:
               def send_html(self,*a,**k): sent.append((a,k))
           w._x_do_GET(H()); route=sent[-1][0][1]
           assert '198.51.100.10' in route and 'WEB потоки' in route
-          print('Responsive real-route PASS')
+          print('Responsive real-route + PWA PASS')
           PY
 
       - name: Update and public-link identity contracts
@@ -112,6 +120,7 @@ jobs:
           if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then exit 1; fi
           grep -q 'WEB_IDENTITY_BEFORE' update.sh
           grep -q 'self-triggering MutationObserver disabled' update.sh
+          grep -q 'Мобильное приложение не должно кэшировать данные админки' update.sh
           grep -q '_a_active_clients_html = active_clients_html' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q 'post-update validation/repair' scripts/component_update.sh
 
