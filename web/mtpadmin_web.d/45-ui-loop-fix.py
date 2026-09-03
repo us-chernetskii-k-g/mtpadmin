@@ -1,29 +1,21 @@
-# MTPADMIN 0.12.1 browser UI safety hotfix.
+# MTPADMIN 0.12.3 browser render-loop safety.
 #
-# The 0.12.0 presentation layer used a document-wide MutationObserver that
-# called enhance() after every DOM mutation. enhance() itself normalised the
-# navigation labels with textContent assignments, which generated another
-# mutation and could trap the browser in a self-triggering render loop.
+# The redesigned UI used a document-wide MutationObserver(enhance). enhance()
+# writes navigation textContent, which itself creates another DOM mutation and
+# can trap a browser in a self-triggering render loop.
 #
-# Keep the rest of the 0.12.0 UI unchanged, but strip that observer from the
-# final HTML response. The initial DOMContentLoaded/one-shot enhance() remains,
-# so branding, navigation labels, user badge and responsive shell are still
-# applied. Live MTPADMIN content refresh does not replace those shell elements.
+# Do not wrap page_template after the release is already active. Remove the
+# dangerous observer directly from the UI script while the assembled Python
+# runtime is being built. The normal one-shot DOMContentLoaded enhance() stays.
 
 _UI_LOOP_OBSERVER = "new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});"
-_UI_LOOP_REPLACEMENT = "/* MTPADMIN 0.12.1: self-triggering MutationObserver disabled */"
-_ui_loop_base_page_template = page_template
+_UI_LOOP_REPLACEMENT = "/* MTPADMIN 0.12.3: self-triggering MutationObserver disabled */"
 
+if '_CLIENT_SCRIPT' not in globals():
+    raise RuntimeError('MTPADMIN UI safety: _CLIENT_SCRIPT is not available')
 
-def page_template(title, body, user, active='dashboard', refresh=None, message=''):
-    doc = _ui_loop_base_page_template(
-        title,
-        body,
-        user,
-        active=active,
-        refresh=refresh,
-        message=message,
-    )
-    if _UI_LOOP_OBSERVER in doc:
-        doc = doc.replace(_UI_LOOP_OBSERVER, _UI_LOOP_REPLACEMENT, 1)
-    return doc
+_count = _CLIENT_SCRIPT.count(_UI_LOOP_OBSERVER)
+if _count != 1:
+    raise RuntimeError(f'MTPADMIN UI safety: dangerous observer count={_count}')
+
+_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace(_UI_LOOP_OBSERVER, _UI_LOOP_REPLACEMENT, 1)
