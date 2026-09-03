@@ -26,7 +26,9 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 if "VERSION='0.12.0'" not in s:
     raise SystemExit('unexpected immutable 0.12.0 updater')
 s=s.replace('0.12.0','0.12.4')
-s=s.replace('loopback-only telemetry tproxy-server','Обычные MTProto-клиенты и WEB-клиенты показываются в одном списке')
+# Keep the 0.12.0 transform that maps the old /active text marker to the
+# user-facing WEB-client sentence. Rewriting its source literal here would
+# make the nested updater search for the new text instead of the old one.
 old="grep -Fq 'Сервис работает стабильно' <<<\"$overview\" || die 'Новая главная страница не активна.'"
 if old not in s:
     raise SystemExit('old dashboard guard not found')
