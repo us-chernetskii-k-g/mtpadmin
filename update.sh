@@ -14,9 +14,9 @@ ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
 
 # Start from the audited 0.12.0 production chain. Its old dashboard guard is
-# intentionally skipped here because analytics-plus owns the real `/` route and
-# kept a stale renderer snapshot. 0.12.4 repairs that route explicitly below
-# and then validates the actual browser-visible page.
+# intentionally skipped because analytics-plus owns the real `/` route and had
+# retained a stale renderer snapshot. 0.12.4 repairs the route and then applies
+# a final browser-stability layer that removes legacy background DOM mutation.
 curl -fsSL --retry 3 "$ROOT/$BASE_0120_COMMIT/update.sh" -o "$TMP/update-0120.sh" || die 'Не удалось скачать проверенный updater 0.12.0.'
 
 python3 - "$TMP/update-0120.sh" <<'PY'
@@ -59,28 +59,32 @@ WEB_PORT=${WEB_ACTIVE_PORT:?}
 [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || die 'Некорректный порт активной веб-панели.'
 [[ -f "$WEB_RELEASE" ]] || die 'Не найдена активная копия веб-панели.'
 
-info 'Подключаю исправление реального маршрута обзора и мобильное приложение...'
+info 'Подключаю стабильный пользовательский интерфейс 0.12.4...'
 FIX="$TMP/45-ui-loop-fix.py"
 PWA="$TMP/46-pwa.py"
 DASH="$TMP/47-dashboard-route-fix.py"
+STABLE="$TMP/48-browser-stability.py"
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web/mtpadmin_web.d/45-ui-loop-fix.py" -o "$FIX" || die 'Не удалось скачать защиту интерфейса.'
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web/mtpadmin_web.d/46-pwa.py" -o "$PWA" || die 'Не удалось скачать модуль мобильного приложения.'
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web/mtpadmin_web.d/47-dashboard-route-fix.py" -o "$DASH" || die 'Не удалось скачать исправление маршрута обзора.'
+curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web/mtpadmin_web.d/48-browser-stability.py" -o "$STABLE" || die 'Не удалось скачать финальную защиту браузера.'
 grep -Fq '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' "$FIX" || die 'Некорректная защита браузерной отрисовки.'
 grep -Fq '_PWA_MANIFEST' "$PWA" || die 'Некорректный модуль мобильного приложения.'
 grep -Fq '_a_dashboard_html = dashboard_html' "$DASH" || die 'Некорректное исправление маршрута обзора.'
+grep -Fq '_BS_REPLACEMENTS' "$STABLE" || die 'Некорректная финальная защита браузера.'
 
 PATCHED="$TMP/mtpadmin-web-patched.py"
-python3 - "$WEB_RELEASE" "$FIX" "$PWA" "$DASH" "$PATCHED" <<'PY'
+python3 - "$WEB_RELEASE" "$FIX" "$PWA" "$DASH" "$STABLE" "$PATCHED" <<'PY'
 from pathlib import Path
 import sys
-src,fix,pwa,dash,dst=map(Path,sys.argv[1:])
+src,fix,pwa,dash,stable,dst=map(Path,sys.argv[1:])
 s=src.read_text(encoding='utf-8')
 marker="if __name__=='__main__': main()"
 for path, unique in (
     (fix, '# MTPADMIN 0.12.3 browser render-loop safety.'),
     (pwa, '# MTPADMIN 0.12.2 mobile application layer.'),
     (dash, '# MTPADMIN 0.12.4 dashboard route binding fix.'),
+    (stable, '# MTPADMIN 0.12.4 browser stability guard.'),
 ):
     if unique in s:
         continue
@@ -92,8 +96,9 @@ dst.write_text(s,encoding='utf-8')
 PY
 python3 -m py_compile "$PATCHED" || die 'Исправленная веб-панель не прошла проверку Python.'
 grep -Fq '# MTPADMIN 0.12.4 dashboard route binding fix.' "$PATCHED" || die 'Исправление маршрута обзора не встроилось.'
+grep -Fq '# MTPADMIN 0.12.4 browser stability guard.' "$PATCHED" || die 'Финальная защита браузера не встроилась.'
 
-BACKUP="${WEB_RELEASE}.before-0.12.4-dashboard-fix-$(date +%Y%m%d-%H%M%S)"
+BACKUP="${WEB_RELEASE}.before-0.12.4-browser-stability-$(date +%Y%m%d-%H%M%S)"
 cp -a "$WEB_RELEASE" "$BACKUP"
 install -m 0700 -o root -g root "$PATCHED" "$WEB_RELEASE"
 if ! systemctl restart "$WEB_SERVICE"; then
@@ -113,21 +118,27 @@ if (( ready != 1 )); then
   die 'Веб-панель не вышла в READY; выполнен откат веб-файла.'
 fi
 
-OVERVIEW=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT/") || die 'Главная страница не отвечает после 0.12.4.'
-DANGEROUS='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
-if grep -Fq "$DANGEROUS" <<<"$OVERVIEW"; then
-  die 'Опасный MutationObserver всё ещё попадает в браузерный HTML.'
-fi
-grep -Fq 'Сервис работает стабильно' <<<"$OVERVIEW" || die 'Реальный маршрут обзора всё ещё использует старый renderer.'
+check_browser_page(){
+  local path="$1" marker="$2" label="$3" html
+  html=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT$path") || die "$label не отвечает после 0.12.4."
+  grep -Fq "$marker" <<<"$html" || die "$label не содержит ожидаемый пользовательский интерфейс."
+  if grep -Fq 'new MutationObserver(' <<<"$html"; then die "$label всё ещё содержит MutationObserver."; fi
+  if grep -Fq 'setInterval(' <<<"$html"; then die "$label всё ещё содержит фоновый setInterval."; fi
+  grep -Fq 'MTPADMIN 0.12.4: background full-page live refresh disabled' <<<"$html" || die "$label не содержит защиту от фоновой полной перерисовки."
+  printf '%s' "$html"
+}
+
+OVERVIEW=$(check_browser_page '/' 'Сервис работает стабильно' 'Главная страница')
 grep -Fq 'Быстрые действия' <<<"$OVERVIEW" || die 'Новая главная страница не отрисовалась полностью.'
 grep -Fq 'mtpadmin-client-ui' <<<"$OVERVIEW" || die 'Пользовательский интерфейс не активен.'
-grep -Fq 'rel="manifest" href="/manifest.webmanifest"' <<<"$OVERVIEW" || die 'PWA потерян после исправления маршрута.'
+grep -Fq 'rel="manifest" href="/manifest.webmanifest"' <<<"$OVERVIEW" || die 'PWA потерян после исправления интерфейса.'
+grep -Fq '● по запросу' <<<"$OVERVIEW" || die 'Интерфейс всё ещё обещает фоновое обновление.'
 grep -Fq 'версия 0.12.4' <<<"$OVERVIEW" || die 'Активная веб-панель показывает неверную версию.'
 
-OPERATIONS=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT/operations") || die 'Страница управления не отвечает после 0.12.4.'
-grep -Fq 'Управление сервисом' <<<"$OPERATIONS" || die 'Страница управления не отрисовалась.'
-ACTIVE=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT/active") || die 'Страница активных клиентов не отвечает после 0.12.4.'
-grep -Fq 'WEB потоки' <<<"$ACTIVE" || die 'WEB-клиенты потеряны после исправления маршрута.'
+OPERATIONS=$(check_browser_page '/operations' 'Управление сервисом' 'Страница управления')
+ACTIVE=$(check_browser_page '/active' 'WEB потоки' 'Страница активных клиентов')
+GEO=$(check_browser_page '/geo' 'География' 'Страница географии')
+grep -Fq 'world-map' <<<"$GEO" || die 'Карта потеряна после отключения MutationObserver.'
 
 /usr/local/bin/mtpadmin doctor || die 'Итоговая проверка MTPADMIN 0.12.4 обнаружила ошибку.'
-ok 'MTPADMIN 0.12.4 установлен: реальный маршрут обзора использует новый интерфейс, PWA сохранён, цикл браузера устранён.'
+ok 'MTPADMIN 0.12.4 установлен: реальный маршрут обзора исправлен; фоновые DOM-перестройки отключены; PWA сохранён.'
