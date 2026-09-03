@@ -38,7 +38,6 @@ jobs:
           grep -q "VERSION='0.12.0'" install.sh
           grep -q "VERSION='0.12.0'" update.sh
           grep -q "VERSION='0.12.0'" web-install.sh
-          grep -q "BASE_01115_COMMIT='c874bc494881f8fa6870989ff0315bc39149abd2'" install.sh
           grep -q "BASE_01115_COMMIT='c874bc494881f8fa6870989ff0315bc39149abd2'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' install.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
@@ -48,16 +47,27 @@ jobs:
           bash -n scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
-      - name: Clean install keeps full setup wizard
+      - name: Clean install full wizard contract
         run: |
           set -euo pipefail
-          grep -q 'проверенный мастер установки 0.11.15' install.sh
-          grep -q 'Домен веб-админки' install.sh
+          grep -q 'MTPADMIN · ПЕРВОНАЧАЛЬНАЯ УСТАНОВКА' install.sh
+          grep -q 'До подтверждения пакеты и службы системы не изменяются' install.sh
+          grep -q "ask 'Домен обычного MTProto Proxy'" install.sh
+          grep -q "ask 'Домен веб-админки'" install.sh
+          grep -q "ask 'Логин администратора'" install.sh
           grep -q 'Повторите пароль веб-админки' install.sh
-          grep -q 'Домен Telegram WEB Proxy' install.sh
+          grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
+          grep -q 'Начать установку с этими параметрами' install.sh
+          grep -q 'install -d -m 0711 -o root -g root "$BUILD_ROOT"' install.sh
           grep -q "предупреждения DNS?' 'N'" install.sh
           grep -q 'MTPADMIN_RELEASE_REF="$RELEASE_REF"' install.sh
+          grep -q 'MTPADMIN_WEB_PASSWORD="$WEB_PASS"' install.sh
           ! grep -q 'echo.*WEB_PASS' install.sh
+          python3 - <<'PY'
+          s=open('install.sh',encoding='utf-8').read()
+          assert s.index("confirm 'Начать установку с этими параметрами?'") < s.index('install -d -m 0711 -o root -g root "$BUILD_ROOT"')
+          print('Clean installer pre-confirm boundary PASS')
+          PY
 
       - name: Client UI real render and Update Center routing
         run: |
@@ -167,6 +177,7 @@ jobs:
           set -euo pipefail
           grep -q 'свой Telegram Proxy с веб' README.md
           grep -q 'Новый Telegram WEB Proxy' README.md
+          grep -q '\*\*0.12.0\*\*' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           python3 - <<'PY'
           import pathlib,re
