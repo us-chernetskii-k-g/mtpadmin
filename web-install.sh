@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.11.15'
+VERSION='0.12.0'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}
@@ -27,21 +27,17 @@ get_update(){
   curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/update.sh" -o "$dst" || die 'Не удалось скачать update.sh.'
   chmod 0700 "$dst"; bash -n "$dst"
 }
-
-run_update(){
-  local dst="$1"
-  MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$dst"
-}
+run_update(){ MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$1"; }
 
 if grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
-  info 'Веб-панель уже установлена — выполняю обычное бесшовное обновление.'
+  info 'Веб-панель уже установлена — выполняю безопасное обновление.'
   get_update "$TMP/update-existing.sh"
   run_update "$TMP/update-existing.sh"
   ok "MTPADMIN Web $VERSION обновлён."
   exit 0
 fi
 
-info 'Обновляю ядро и подготавливаю Telegram WEB Proxy...'
+info 'Подготавливаю веб-панель и Telegram WEB Proxy...'
 get_update "$TMP/update.sh"
 run_update "$TMP/update.sh"
 
@@ -53,7 +49,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.11.15'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.12.0'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -63,8 +59,8 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh"
 bash "$TMP/base-web-install.sh"
 
-info 'Перевожу веб-панель на проверенную blue/green схему 0.11.15...'
+info 'Включаю актуальную веб-панель MTPADMIN 0.12.0...'
 get_update "$TMP/update-after-web.sh"
 run_update "$TMP/update-after-web.sh"
 
-ok "MTPADMIN Web $VERSION готов. WEB-aware Active route, stable public links, disk-backed WEB telemetry, source lifecycle, persistent stats, Update Center routing safety и VPN BOSS integration включены; autoban=OFF."
+ok "MTPADMIN Web $VERSION готов: адаптивный интерфейс, WEB Proxy, статистика и Центр обновлений включены."
