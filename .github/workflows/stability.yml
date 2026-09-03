@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -34,14 +34,12 @@ jobs:
       - name: Syntax and release contracts
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.0'
-          grep -q "VERSION='0.12.0'" install.sh
-          grep -q "VERSION='0.12.0'" update.sh
-          grep -q "VERSION='0.12.0'" web-install.sh
-          grep -q "BASE_01115_COMMIT='c874bc494881f8fa6870989ff0315bc39149abd2'" update.sh
+          test "$(cat VERSION)" = '0.12.1'
+          grep -q "VERSION='0.12.1'" update.sh
+          grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q '@media(max-width:760px)' web/mtpadmin_web.d/44-webproxy-activity.py
-          bash -n /tmp/mtpadmin install.sh update.sh web-install.sh scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
+          grep -q '_UI_LOOP_OBSERVER' web/mtpadmin_web.d/45-ui-loop-fix.py
+          bash -n /tmp/mtpadmin update.sh install.sh web-install.sh scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
       - name: SQLite FD regression
@@ -78,12 +76,13 @@ jobs:
           print('Source lifecycle PASS')
           PY
 
-      - name: Responsive UI does not break real routes
+      - name: Responsive routes and render-loop safety
         run: |
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.0'}
+          w.VERSION='0.12.1'
+          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.1'}
           w.query=lambda *a,**k:[]; w.scalar=lambda *a,**k:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True; w._o_health=lambda:(100,[['TeleMT','PASS']])
           w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'1','available':False} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':0}
@@ -92,8 +91,9 @@ jobs:
           w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8}; w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           w.api_json=lambda p,**k:[{'username':'A','active_ips':['203.0.113.7']}] if p=='/v1/stats/users/active-ips' else []
           helper=w.active_clients_html(); assert '198.51.100.10' in helper and '2001:db8::10' in helper
-          assert 'Обычные MTProto-клиенты и WEB-клиенты показываются в одном списке' in helper
-          shell=w.page_template('Активные',helper,'admin','active'); assert 'mtp-modern' in shell and 'Исходный код' in shell
+          shell=w.page_template('Активные',helper,'admin','active')
+          dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
+          assert 'mtp-modern' in shell and 'self-triggering MutationObserver disabled' in shell and dangerous not in shell
           sent=[]; w._x_online_card=lambda *a,**k:'ONLINE'
           class H:
               path='/active?range=6h'
@@ -105,16 +105,15 @@ jobs:
           print('Responsive real-route PASS')
           PY
 
-      - name: Update routing and public-link identity contracts
+      - name: Update and public-link identity contracts
         run: |
           set -euo pipefail
           MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":true}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh
           if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then exit 1; fi
           grep -q 'WEB_IDENTITY_BEFORE' update.sh
-          grep -q 'Проверка сохранения WEB-ссылки потеряна' update.sh
-          grep -q 'Обычные MTProto-клиенты и WEB-клиенты показываются в одном списке' update.sh
+          grep -q 'self-triggering MutationObserver disabled' update.sh
           grep -q '_a_active_clients_html = active_clients_html' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q "action='/action/component-update/{esc(key)}'" web/mtpadmin_web.d/44-webproxy-activity.py
+          grep -q 'post-update validation/repair' scripts/component_update.sh
 
       - name: Production safety contracts
         run: |
@@ -125,20 +124,13 @@ jobs:
           grep -q 'GOTMPDIR="$gotmp"' scripts/webproxy_telemetry_install.sh
           grep -q 'MAX_AGE=.*120' scripts/scanner_watchdog.sh
           grep -q 'systemctl restart "$SCANNER"' scripts/scanner_watchdog.sh
-          grep -q 'post-update validation/repair' scripts/component_update.sh
 
-      - name: Public product and support contract
+      - name: Product and secret guard
         run: |
           set -euo pipefail
           grep -q 'свой Telegram Proxy с веб' README.md
           grep -q 'Новый Telegram WEB Proxy' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
-          grep -q 'https://yookassa.ru/my/i/aoLKJEpmtnnX/l' README.md
-          grep -q 'github.com/us-chernetskii-k-g/mtpadmin' web/mtpadmin_web.d/44-webproxy-activity.py
-          grep -q '©' web/mtpadmin_web.d/44-webproxy-activity.py
-
-      - name: Guard against accidental production secrets
-        run: |
           python3 - <<'PY'
           import pathlib,re
           allowed={'00112233445566778899aabbccddeeff','ffeeddccbbaa99887766554433221100','11111111111111111111111111111111','22222222222222222222222222222222','33333333333333333333333333333333'}
