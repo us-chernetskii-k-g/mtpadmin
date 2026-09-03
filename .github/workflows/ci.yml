@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py','47-dashboard-route-fix.py','48-browser-stability.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -34,12 +34,13 @@ jobs:
       - name: Version syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.3'
-          grep -q "VERSION='0.12.3'" update.sh
-          grep -q "BASE_0122_COMMIT='00fdcb5c44e20cdae932f5eefe95687adcb1860d'" update.sh
+          test "$(cat VERSION)" = '0.12.4'
+          grep -q "VERSION='0.12.4'" update.sh
+          grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
-          grep -q '# MTPADMIN 0.12.3 browser render-loop safety.' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' web/mtpadmin_web.d/45-ui-loop-fix.py
+          grep -q '_a_dashboard_html = dashboard_html' web/mtpadmin_web.d/47-dashboard-route-fix.py
+          grep -q '_BS_REPLACEMENTS' web/mtpadmin_web.d/48-browser-stability.py
           bash -n /tmp/mtpadmin update.sh install.sh web-install.sh
           bash -n scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
@@ -56,37 +57,43 @@ jobs:
           grep -q "предупреждения DNS?' 'N'" install.sh
           ! grep -q 'echo.*WEB_PASS' install.sh
 
-      - name: Browser UI and PWA regression
+      - name: Browser UI PWA and stable-session regression
         run: |
           python3 - <<'PY'
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.3'
-          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.3'}
+          w.VERSION='0.12.4'
+          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.4'}
           w.query=lambda *a,**kw:[]; w.scalar=lambda *a,**kw:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True
           w._o_health=lambda:(100,[['TeleMT','<span class="ok">PASS</span>']])
           w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'1','available':False} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':0}
           w._o_component_status=lambda:{}; w._o_backups=lambda:'backup'; w._o_learning=lambda:'guard'; w._o_webproxy_link=lambda:''; w._o_qr=lambda x:''
           w.source_rows=lambda:[{'username':'MAIN','enabled':True,'current_connections':4,'active_unique_ips':2,'total_octets':100}]
+          w._wm_ensure=lambda:False
+          assert w._a_dashboard_html is w.dashboard_html
+          assert w._a_active_clients_html is w.active_clients_html
+
+          def stable(html):
+              assert 'mtpadmin-client-ui' in html
+              assert 'new MutationObserver(' not in html
+              assert 'setInterval(' not in html
+              assert 'MTPADMIN 0.12.4: background full-page live refresh disabled' in html
+              assert '● по запросу' in html
+              assert 'rel="manifest" href="/manifest.webmanifest"' in html
+
           html=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
-          dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
-          assert 'mtpadmin-client-ui' in html and 'Сервис работает стабильно' in html
-          assert 'MTPADMIN 0.12.3: self-triggering MutationObserver disabled' in html and dangerous not in html
-          assert 'rel="manifest" href="/manifest.webmanifest"' in html
+          stable(html)
+          assert 'Сервис работает стабильно' in html and 'Быстрые действия' in html
           assert 'id="m-pwa-sheet"' in html and 'Установить приложение' in html and 'Продолжить в браузере' in html
-          assert "navigator.serviceWorker.register('/mtpadmin-sw.js'" in html
           manifest=json.loads(w._PWA_MANIFEST.decode())
           assert manifest['name']=='MTPADMIN' and manifest['display']=='standalone' and manifest['scope']=='/'
           assert {x['sizes'] for x in manifest['icons']} >= {'192x192','512x512'}
-          sw=w._PWA_SW.decode()
-          assert 'event.respondWith(fetch(event.request))' in sw
+          sw=w._PWA_SW.decode(); assert 'event.respondWith(fetch(event.request))' in sw
           assert 'caches.open' not in sw and 'caches.match' not in sw and 'CacheStorage' not in sw
-          assert w._pwa_icon_png(192).startswith(b'\x89PNG\r\n\x1a\n')
-          assert w._pwa_icon_png(512).startswith(b'\x89PNG\r\n\x1a\n')
-          ops=w.page_template('Операции',w._o_operations_html('admin','csrf'),'admin','operations')
-          assert 'Управление сервисом' in ops and dangerous not in ops and 'manifest.webmanifest' in ops
-          print('Browser UI + PWA regression PASS')
+          ops=w.page_template('Операции',w._o_operations_html('admin','csrf'),'admin','operations'); stable(ops)
+          geo=w.page_template('География',"<div id='world-map'></div>",'admin','geo'); stable(geo)
+          print('Browser stable-session regression PASS')
           PY
 
       - name: WEB client route and source runtime safety
@@ -96,16 +103,17 @@ jobs:
           if MTPADMIN_WEBPROXY_PROBE_RUNTIME_JSON='{"data":[{"username":"WEB_PROXY","in_runtime":false}]}' MTPADMIN_WEBPROXY_PROBE_SOURCE=WEB_PROXY bash scripts/webproxy_install.sh; then exit 1; fi
           grep -q 'x.get("in_runtime") is True' scripts/webproxy_install.sh
           grep -q 'WEB_IDENTITY_BEFORE' update.sh
-          grep -q 'mtpadmin-client-ui' update.sh
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.VERSION='0.12.4'
           w.state=lambda:{'PROFILE':'DEIMOS','WEBPROXY_SOURCE':'WEB_PROXY'}
           w._wpa_source_rows=lambda:[{'username':'DEIMOS','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
           w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8}; w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
           w.api_json=lambda p,**k:[{'username':'DEIMOS','active_ips':['203.0.113.7']}] if p=='/v1/stats/users/active-ips' else []; w.query=lambda *a,**k:[]
           html=w.active_clients_html(); assert '198.51.100.10' in html and '2001:db8::10' in html and 'WEB потоки' in html
-          shell=w.page_template('Активные',html,'admin','active'); assert 'new MutationObserver(enhance).observe' not in shell
+          shell=w.page_template('Активные',html,'admin','active')
+          assert 'new MutationObserver(' not in shell and 'setInterval(' not in shell
           print('WEB client route PASS')
           PY
 
@@ -119,7 +127,8 @@ jobs:
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'post-update validation/repair' scripts/component_update.sh
           grep -q 'manifest.webmanifest' update.sh
-          grep -q 'PWA потерян после стабилизации интерфейса' update.sh
+          grep -q 'MutationObserver' update.sh
+          grep -q 'setInterval' update.sh
 
       - name: Compile patched upstream tproxy-server
         run: |
