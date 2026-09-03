@@ -1,0 +1,91 @@
+name: MTPADMIN UI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble full web runtime with public UI
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/web.py')
+          base=('00-core.py','10-ui.py','20-pages.py','30-actions.py')
+          ext=('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-client-ui.py')
+          s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in base)
+          marker="if __name__=='__main__': main()"
+          assert s.count(marker)==1
+          for x in ext:
+              e=Path('web/mtpadmin_web.d/'+x).read_text()
+              s=s.replace(marker,e.rstrip()+'\n\n'+marker,1)
+          p.write_text(s)
+          PY
+          python3 -m py_compile /tmp/web.py
+
+      - name: Public shell and responsive contracts
+        run: |
+          set -euo pipefail
+          grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/45-client-ui.py
+          grep -q 'grid-template-columns:236px' web/mtpadmin_web.d/45-client-ui.py
+          grep -q '@media(max-width:760px)' web/mtpadmin_web.d/45-client-ui.py
+          grep -q 'Сообщество' web/mtpadmin_web.d/45-client-ui.py
+          grep -q 'github.com/us-chernetskii-k-g/mtpadmin' web/mtpadmin_web.d/45-client-ui.py
+          grep -q '©' web/mtpadmin_web.d/45-client-ui.py
+
+      - name: Render public pages
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py')
+          w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.state=lambda:{'PROFILE':'MAIN','PUBLIC_HOST':'proxy.example.com','PORT':'8443','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.0','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w.query=lambda *a,**k:[]
+          w.scalar=lambda *a,**k:0
+          w._o_service=lambda *a:True
+          w._o_http_ok=lambda *a:True
+          w._o_health=lambda:(100,[['TeleMT','<span class="ok">PASS</span>']])
+          w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'1','available':False} for k in ('mtpadmin','telemt','webproxy')},'updates':0,'checked_at':1}
+          w._o_component_status=lambda:{}
+          w._o_backups=lambda:'<div>backup</div>'
+          w._o_learning=lambda:'<div>guard</div>'
+          w._o_webproxy_link=lambda:'https://t.me/webproxy?server=webproxy.example.com&secret=test'
+          w._o_qr=lambda link:''
+          w.source_rows=lambda:[{'username':'MAIN','enabled':True,'current_connections':7,'active_unique_ips':3,'total_octets':1024},{'username':'WEB_PROXY','enabled':True,'current_connections':1,'active_unique_ips':1,'total_octets':2048}]
+          dash=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
+          assert 'Сервис работает стабильно' in dash
+          assert 'Быстрые действия' in dash
+          assert 'Управление Telegram Proxy' in dash
+          assert 'Исходный код' in dash and 'Помощь и сообщество' in dash
+          assert 'mtp-modern' in dash and 'm-logo' in dash
+          ops=w.page_template('Операции',w._o_operations_html('admin','csrf'),'admin','operations')
+          assert 'Управление сервисом' in ops
+          assert 'Для специалистов' in ops
+          assert 'Центр обновлений' in ops
+          assert 'blue/green' not in w._o_update_center('csrf')
+          print('Public UI render PASS')
+          PY
+
+      - name: Existing active-client route remains intact
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY'}
+          w._wpa_source_rows=lambda:[{'username':'A','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
+          w._wpa_metrics=lambda:{'tproxy_sessions_live':1,'tproxy_streams_live':8}
+          w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':1}]
+          w.api_json=lambda p,**k:[{'username':'A','active_ips':['203.0.113.7']}] if p=='/v1/stats/users/active-ips' else []
+          w.query=lambda *a,**k:[]
+          html=w.active_clients_html()
+          assert '198.51.100.10' in html and 'WEB_PROXY' in html and 'WEB потоки' in html
+          print('Existing active route PASS')
+          PY
