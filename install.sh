@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.12.0'
+VERSION='0.12.1'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
@@ -121,7 +121,6 @@ valid_host "$WEBPROXY_HOST" || die 'Некорректный домен Telegram
 [[ "$WEB_USER" =~ ^[A-Za-z0-9_.@-]{1,64}$ ]] || die 'Некорректный логин администратора.'
 ((${#WEB_PASS}>=10)) || die 'Пароль веб-админки должен быть минимум 10 символов.'
 
-# Проверяем место на диске без создания постоянных каталогов до подтверждения.
 FREE_BUILD_KB=$(df -Pk /var/tmp | awk 'NR==2{print $4}')
 [[ "$FREE_BUILD_KB" =~ ^[0-9]+$ ]] || die 'Не удалось проверить свободное место.'
 ((FREE_BUILD_KB>=1048576)) || die "Для установки нужно минимум 1 ГиБ свободно на файловой системе /var/tmp; сейчас $((FREE_BUILD_KB/1024)) МБ."
@@ -151,7 +150,6 @@ EOF
 
 confirm 'Начать установку с этими параметрами?' 'Y' || die 'Установка отменена пользователем.'
 
-# Только после явного подтверждения создаём рабочий каталог сборки.
 install -d -m 0711 -o root -g root "$BUILD_ROOT"
 
 for host in "$PUBLIC_HOST" "$WEB_HOST" "$WEBPROXY_HOST"; do
