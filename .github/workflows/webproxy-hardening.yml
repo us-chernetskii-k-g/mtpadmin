@@ -1,0 +1,92 @@
+name: WEB Proxy Hardening
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  hardening:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell contracts
+        run: |
+          set -euo pipefail
+          bash -n scripts/webproxy_update_hardening.sh scripts/component_update_wrapper.sh scripts/public_landings_install.sh hotfix-webproxy.sh
+          grep -q "TOKEN_KEY='/etc/tproxy-server/token.key'" scripts/webproxy_update_hardening.sh
+          grep -q 'TPROXY_LEGACY_TOKEN_DRAIN=1' scripts/webproxy_update_hardening.sh
+          grep -q 'wc -c < "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
+          grep -q 'chmod 0400 "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
+          grep -q 'component update compatibility wrapper 0.12.5' scripts/component_update_wrapper.sh
+          grep -q 'not header Authorization \*' scripts/public_landings_install.sh
+          grep -q 'BRAKONDER Cloud' scripts/public_landings_install.sh
+          grep -q 'BRAKONDER Access' scripts/public_landings_install.sh
+
+      - name: Build new upstream with MTPADMIN telemetry
+        run: |
+          set -euo pipefail
+          COMMIT=c0e9adf81abbd7559f0e15f4e1ffbcf71da720dc
+          rm -rf /tmp/tproxy-new
+          git init -q /tmp/tproxy-new
+          git -C /tmp/tproxy-new remote add origin https://github.com/telegramdesktop/tproxy-server.git
+          git -C /tmp/tproxy-new fetch -q --depth=1 origin "$COMMIT"
+          git -C /tmp/tproxy-new checkout -q --detach FETCH_HEAD
+          MTPADMIN_TPROXY_TELEMETRY_PATCH_SOURCE=/tmp/tproxy-new bash scripts/webproxy_telemetry_install.sh
+          (cd /tmp/tproxy-new && go test ./...)
+          (cd /tmp/tproxy-new && go build -trimpath -o /tmp/tproxy-server ./cmd/tproxy-server)
+
+      - name: Validate signed-token production-style config
+        run: |
+          set -euo pipefail
+          install -d /tmp/tproxy-site-test
+          printf '<!doctype html><title>Public site</title>\n' >/tmp/tproxy-site-test/index.html
+          head -c 32 /dev/urandom >/tmp/token.key
+          chmod 0400 /tmp/token.key
+          cat >/tmp/profiles.json <<'JSON'
+          {"profiles":[{"name":"WEB_PROXY","secret":"00112233445566778899aabbccddeeff","backend":"127.0.0.1:2398","carrier_mode":"https"}]}
+          JSON
+          chmod 0400 /tmp/profiles.json
+          cat >/tmp/config.json <<'JSON'
+          {
+            "public_hostname":"webproxy.example.com",
+            "listen":"127.0.0.1:18080",
+            "admin_listen":"127.0.0.1:18081",
+            "public_dir":"/tmp/tproxy-site-test",
+            "profiles_file":"/tmp/profiles.json",
+            "token_key_file":"/tmp/token.key"
+          }
+          JSON
+          /tmp/tproxy-server -config /tmp/config.json -profiles-file /tmp/profiles.json -check
+
+      - name: Old deployment must need token key on new upstream
+        run: |
+          set -euo pipefail
+          cp /tmp/config.json /tmp/config-no-key.json
+          python3 - <<'PY'
+          import json
+          p='/tmp/config-no-key.json'; d=json.load(open(p)); d['token_key_file']='/tmp/missing-token.key'; open(p,'w').write(json.dumps(d))
+          PY
+          if /tmp/tproxy-server -config /tmp/config-no-key.json -profiles-file /tmp/profiles.json -check; then
+            echo 'new upstream unexpectedly accepted missing token key' >&2
+            exit 1
+          fi
+          echo 'Missing-token-key regression reproduced as expected'
+
+      - name: Landing pages do not expose proxy internals to visitors
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,re
+          s=pathlib.Path('scripts/public_landings_install.sh').read_text()
+          admin=re.search(r"cat > \"\$TMP/admin-index.html\" <<'HTML'\n(.*?)\nHTML",s,re.S).group(1)
+          web=re.search(r"cat > \"\$TMP/webproxy-index.html\" <<'HTML'\n(.*?)\nHTML",s,re.S).group(1)
+          for name,html in [('admin',admin),('webproxy',web)]:
+              assert '<!doctype html>' in html.lower()
+              for forbidden in ('MTPADMIN','Telegram Proxy','VPN BOSS','GitHub','tproxy-server'):
+                  assert forbidden not in html,(name,forbidden)
+          print('Public landing content guard PASS')
+          PY
