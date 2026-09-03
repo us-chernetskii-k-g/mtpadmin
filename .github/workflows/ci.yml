@@ -26,7 +26,7 @@ jobs:
           p.write_text(s.replace(m,e.rstrip()+'\n\n'+m,1))
           p=Path('/tmp/web.py'); s=''.join(Path('web/mtpadmin_web.d/'+x).read_text() for x in ('00-core.py','10-ui.py','20-pages.py','30-actions.py'))
           m="if __name__=='__main__': main()"; assert s.count(m)==1
-          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py'):
+          for x in ('35-world-map.py','36-analytics.py','37-analytics-plus.py','38-operations.py','39-compact-ui.py','40-async-update-ui.py','41-webproxy-links-ui.py','42-stability.py','43-db-safety.py','44-webproxy-activity.py','45-ui-loop-fix.py','46-pwa.py'):
               e=Path('web/mtpadmin_web.d/'+x).read_text(); s=s.replace(m,e.rstrip()+'\n\n'+m,1)
           p.write_text(s)
           PY
@@ -34,8 +34,10 @@ jobs:
       - name: Version syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.1'
-          grep -q "VERSION='0.12.1'" update.sh
+          test "$(cat VERSION)" = '0.12.2'
+          grep -q "VERSION='0.12.2'" update.sh
+          grep -q "VERSION='0.12.2'" install.sh
+          grep -q "VERSION='0.12.2'" web-install.sh
           grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
           bash -n /tmp/mtpadmin update.sh install.sh web-install.sh
@@ -52,15 +54,16 @@ jobs:
           grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
           grep -q 'Начать установку с этими параметрами' install.sh
           grep -q "предупреждения DNS?' 'N'" install.sh
+          grep -q "VERSION='0.12.2'" web-install.sh
           ! grep -q 'echo.*WEB_PASS' install.sh
 
-      - name: Browser UI render-loop regression
+      - name: Browser UI and PWA regression
         run: |
           python3 - <<'PY'
-          import importlib.util
+          import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.1'
-          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.1'}
+          w.VERSION='0.12.2'
+          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.2'}
           w.query=lambda *a,**kw:[]; w.scalar=lambda *a,**kw:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True
           w._o_health=lambda:(100,[['TeleMT','<span class="ok">PASS</span>']])
@@ -70,11 +73,21 @@ jobs:
           html=w.page_template('Обзор',w.dashboard_html(),'admin','dashboard')
           dangerous='new MutationObserver(enhance).observe(document.documentElement,{childList:true,subtree:true});'
           assert 'mtpadmin-client-ui' in html and 'Сервис работает стабильно' in html
-          assert 'self-triggering MutationObserver disabled' in html
-          assert dangerous not in html
+          assert 'self-triggering MutationObserver disabled' in html and dangerous not in html
+          assert 'rel="manifest" href="/manifest.webmanifest"' in html
+          assert 'id="m-pwa-sheet"' in html and 'Установить приложение' in html and 'Продолжить в браузере' in html
+          assert "navigator.serviceWorker.register('/mtpadmin-sw.js'" in html
+          manifest=json.loads(w._PWA_MANIFEST.decode())
+          assert manifest['name']=='MTPADMIN' and manifest['display']=='standalone' and manifest['scope']=='/'
+          assert {x['sizes'] for x in manifest['icons']} >= {'192x192','512x512'}
+          sw=w._PWA_SW.decode()
+          assert 'event.respondWith(fetch(event.request))' in sw
+          assert 'caches.open' not in sw and 'caches.match' not in sw and 'CacheStorage' not in sw
+          assert w._pwa_icon_png(192).startswith(b'\x89PNG\r\n\x1a\n')
+          assert w._pwa_icon_png(512).startswith(b'\x89PNG\r\n\x1a\n')
           ops=w.page_template('Операции',w._o_operations_html('admin','csrf'),'admin','operations')
-          assert 'Управление сервисом' in ops and dangerous not in ops
-          print('Browser UI regression PASS')
+          assert 'Управление сервисом' in ops and dangerous not in ops and 'manifest.webmanifest' in ops
+          print('Browser UI + PWA regression PASS')
           PY
 
       - name: WEB client route and source runtime safety
@@ -106,6 +119,8 @@ jobs:
           grep -q 'restore_patched_backup' scripts/webproxy_telemetry_install.sh
           grep -q '"max_pending_items_per_session": 16384' scripts/webproxy_install.sh
           grep -q 'post-update validation/repair' scripts/component_update.sh
+          grep -q "web/mtpadmin_web.d/46-pwa.py" update.sh
+          grep -q 'Мобильное приложение не должно кэшировать данные админки' update.sh
 
       - name: Compile patched upstream tproxy-server
         run: |
