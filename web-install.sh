@@ -29,6 +29,8 @@ get_update(){
 }
 run_update(){ MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$1"; }
 
+# Existing installation: only run the release-pinned updater. It already uses
+# blue/green switching and all production checks.
 if grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
   info 'Веб-панель уже установлена — выполняю безопасное обновление.'
   get_update "$TMP/update-existing.sh"
@@ -37,10 +39,10 @@ if grep -Fq "$WEB_BEGIN" "$CADDYFILE" && grep -Fq "$WEB_END" "$CADDYFILE"; then
   exit 0
 fi
 
-info 'Подготавливаю веб-панель и Telegram WEB Proxy...'
-get_update "$TMP/update.sh"
-run_update "$TMP/update.sh"
-
+# Fresh installation: first create the minimal local web service and Caddy
+# block. Only after that run the current updater, because the blue/green update
+# chain expects an existing web runtime to migrate.
+info 'Создаю базовую веб-панель...'
 curl -fsSL --retry 3 "$ROOT/$BASE_COMMIT/web-install.sh" -o "$TMP/base-web-install.sh" || die 'Не удалось скачать базовый web-installer.'
 python3 - "$TMP/base-web-install.sh" <<'PY'
 from pathlib import Path
@@ -59,7 +61,7 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh"
 bash "$TMP/base-web-install.sh"
 
-info 'Включаю актуальную веб-панель MTPADMIN 0.12.1...'
+info 'Включаю актуальную веб-панель, статистику и Telegram WEB Proxy MTPADMIN 0.12.1...'
 get_update "$TMP/update-after-web.sh"
 run_update "$TMP/update-after-web.sh"
 
