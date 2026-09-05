@@ -5,12 +5,14 @@ on:
     paths:
       - install.sh
       - web-install.sh
+      - update.sh
       - VERSION
       - .github/workflows/installer-interactive.yml
   pull_request:
     paths:
       - install.sh
       - web-install.sh
+      - update.sh
       - VERSION
       - .github/workflows/installer-interactive.yml
   workflow_dispatch:
@@ -18,7 +20,7 @@ on:
 jobs:
   interactive-wizard:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -26,24 +28,27 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          bash -n install.sh web-install.sh
-          test "$(cat VERSION)" = '0.12.4'
-          grep -Fq "VERSION='0.12.4'" install.sh
-          grep -Fq "VERSION='0.12.4'" web-install.sh
-          grep -Fq "VERSION='0.12.4'" update.sh
+          bash -n install.sh web-install.sh update.sh
+          test "$(cat VERSION)" = '0.12.5'
+          grep -Fq "VERSION='0.12.5'" install.sh
+          grep -Fq "VERSION='0.12.5'" web-install.sh
+          grep -Fq "VERSION='0.12.5'" update.sh
           grep -Fq 'ask(){' install.sh
           grep -Fq 'ask_secret(){' install.sh
+          grep -Fq 'normal_host_inplace(){' install.sh
           grep -Fq 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
-          grep -Fq -- "--retry-all-errors" install.sh
-          grep -Fq -- "--retry-all-errors" web-install.sh
-          awk '/^download "\$ROOT\/\$BASE_COMMIT\/install.sh"/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
-          if grep -Eq '\$\((ask|ask_secret)' /tmp/installer-wizard-active.sh; then
+          grep -Fq 'MTPADMIN_INSTALL_PREFLIGHT_TEST' install.sh
+          grep -Fq -- '--retry-all-errors' install.sh
+          grep -Fq -- '--retry-all-errors' web-install.sh
+          grep -Fq 'download_shell' install.sh
+          awk '/^info .*Проверяю установочные файлы до изменения системы/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
+          if grep -Eq '\$\((ask|ask_secret)[[:space:]]' /tmp/installer-wizard-active.sh; then
             echo 'Interactive ask must never run inside command substitution.' >&2
             exit 1
           fi
-          grep -Fq "ask 'Домен обычного MTProto Proxy'" /tmp/installer-wizard-active.sh
-          grep -Fq "ask 'Домен веб-админки'" /tmp/installer-wizard-active.sh
-          grep -Fq "ask 'Домен Telegram WEB Proxy'" /tmp/installer-wizard-active.sh
+          grep -Fq "ask 'Домен обычного MTProto Proxy' \"\$HOST_DEFAULT\" PUBLIC_HOST" /tmp/installer-wizard-active.sh
+          grep -Fq "ask 'Домен веб-админки' \"\$WEB_DEFAULT\" WEB_HOST" /tmp/installer-wizard-active.sh
+          grep -Fq "ask 'Домен Telegram WEB Proxy' \"\$WEBPROXY_DEFAULT\" WEBPROXY_HOST" /tmp/installer-wizard-active.sh
 
       - name: Downloaded-file style wizard
         shell: bash
@@ -96,3 +101,29 @@ jobs:
           script -qefc "cat ./install.sh | sudo env MTPADMIN_RELEASE_REF=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb MTPADMIN_INSTALL_WIZARD_TEST=1 bash" /tmp/installer-pipe.log < /tmp/answers-pipe
           grep -Fq 'MTProto Proxy:          proxy.example.com:8443' /tmp/installer-pipe.log
           grep -Fq 'Installer interactive wizard test PASS' /tmp/installer-pipe.log
+
+      - name: Release-pinned payload preflight
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          printf 'Y\nY\n' > /tmp/preflight-answers
+          script -qefc "sudo env \
+            MTPADMIN_RELEASE_REF=$GITHUB_SHA \
+            MTP_PUBLIC_HOST=proxy.example.com \
+            MTP_PUBLIC_IP=203.0.113.10 \
+            MTP_PORT=8443 \
+            MTP_PROFILE=MAIN \
+            MTP_FAKE_TLS_DOMAIN=google.com \
+            MTP_RETENTION_DAYS=7 \
+            MTP_ANON_RETENTION_DAYS=400 \
+            MTP_PROMOTED_CHANNEL= \
+            MTP_RAW_SECRET=00112233445566778899aabbccddeeff \
+            MTP_AD_TAG= \
+            MTPADMIN_WEB_HOST=mtpadmin.example.com \
+            MTPADMIN_WEB_USER=admin \
+            MTPADMIN_WEB_PASSWORD=1234567890x \
+            MTPADMIN_WEBPROXY_HOST=webproxy.example.com \
+            MTPADMIN_INSTALL_PREFLIGHT_TEST=1 \
+            bash ./install.sh" /tmp/installer-preflight.log < /tmp/preflight-answers
+          grep -Fq 'Все основные установочные файлы скачаны и прошли проверку синтаксиса.' /tmp/installer-preflight.log
+          grep -Fq 'Installer payload preflight test PASS' /tmp/installer-preflight.log
