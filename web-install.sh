@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.12.4'
+VERSION='0.12.5'
 BASE_COMMIT='579aef84a1e58c4768357ab7ed238a8b787d4a8a'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}
@@ -39,6 +39,7 @@ get_update(){
   download "$ROOT/$RELEASE_REF/update.sh" "$dst" 'update.sh'
   chmod 0700 "$dst"
   bash -n "$dst" || die 'Скачанный update.sh не прошёл проверку синтаксиса.'
+  grep -Fq "VERSION='0.12.5'" "$dst" || die 'Скачанный update.sh не соответствует MTPADMIN 0.12.5.'
 }
 run_update(){ MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$1"; }
 
@@ -64,7 +65,7 @@ p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 checks=["VERSION='0.5.0'","PORT=9199","RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX"]
 for marker in checks:
     if marker not in s: raise SystemExit('unexpected immutable web installer: '+marker)
-s=s.replace("VERSION='0.5.0'", "VERSION='0.12.4'", 1)
+s=s.replace("VERSION='0.5.0'", "VERSION='0.12.5'", 1)
 s=s.replace("PORT=9199", "WEB_PORT=9199", 1)
 s=s.replace('$PORT', '$WEB_PORT')
 s=s.replace('RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX','RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK',1)
@@ -74,7 +75,7 @@ chmod 0700 "$TMP/base-web-install.sh"
 bash -n "$TMP/base-web-install.sh" || die 'Базовый web-installer не прошёл проверку синтаксиса.'
 bash "$TMP/base-web-install.sh"
 
-info 'Включаю актуальную веб-панель, мобильное приложение, статистику и Telegram WEB Proxy MTPADMIN 0.12.4...'
+info 'Включаю актуальную веб-панель, мобильное приложение, статистику и Telegram WEB Proxy MTPADMIN 0.12.5...'
 get_update "$TMP/update-after-web.sh"
 run_update "$TMP/update-after-web.sh"
 
