@@ -26,34 +26,37 @@ jobs:
           grep -Fq 'ask(){' install.sh
           grep -Fq 'ask_secret(){' install.sh
           grep -Fq 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
-          if grep -Eq '\$\((ask|ask_secret)' install.sh; then
+          awk '/^curl -fsSL --retry 3 "\$ROOT\/\$BASE_COMMIT\/install.sh"/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
+          if grep -Eq '\$\((ask|ask_secret)' /tmp/installer-wizard-active.sh; then
             echo 'Interactive ask must never run inside command substitution.' >&2
             exit 1
           fi
+          grep -Fq "ask 'Домен обычного MTProto Proxy'" /tmp/installer-wizard-active.sh
+          grep -Fq "ask 'Домен веб-админки'" /tmp/installer-wizard-active.sh
+          grep -Fq "ask 'Домен Telegram WEB Proxy'" /tmp/installer-wizard-active.sh
 
       - name: Downloaded-file style wizard
         shell: bash
         run: |
           set -Eeuo pipefail
-          answers() {
-            printf '%s\n' \
-              'HTTP://Proxy.Example.COM/' \
-              '203.0.113.10' \
-              '8443' \
-              'MAIN' \
-              'HTTPS://Google.COM/' \
-              '7' \
-              '400' \
-              '' \
-              '' \
-              '' \
-              'mtpadmin.example.com' \
-              'admin' \
-              '1234567890x' \
-              '1234567890x' \
-              'webproxy.example.com'
-          }
-          answers | script -qefc "sudo env MTPADMIN_RELEASE_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa MTPADMIN_INSTALL_WIZARD_TEST=1 bash ./install.sh" /tmp/installer-file.log
+          cat > /tmp/answers-file <<'EOF'
+          HTTP://Proxy.Example.COM/
+          203.0.113.10
+          8443
+          MAIN
+          HTTPS://Google.COM/
+          7
+          400
+
+
+
+          mtpadmin.example.com
+          admin
+          1234567890x
+          1234567890x
+          webproxy.example.com
+          EOF
+          script -qefc "sudo env MTPADMIN_RELEASE_REF=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa MTPADMIN_INSTALL_WIZARD_TEST=1 bash ./install.sh" /tmp/installer-file.log < /tmp/answers-file
           grep -Fq 'MTProto Proxy:          proxy.example.com:8443' /tmp/installer-file.log
           grep -Fq 'Веб-админка:            https://mtpadmin.example.com/' /tmp/installer-file.log
           grep -Fq 'Telegram WEB Proxy:     https://webproxy.example.com/' /tmp/installer-file.log
@@ -63,24 +66,23 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          answers() {
-            printf '%s\n' \
-              'proxy.example.com' \
-              '203.0.113.10' \
-              '8443' \
-              'MAIN' \
-              'google.com' \
-              '7' \
-              '400' \
-              '' \
-              '' \
-              '' \
-              'mtpadmin.example.com' \
-              'admin' \
-              '1234567890x' \
-              '1234567890x' \
-              'webproxy.example.com'
-          }
-          answers | script -qefc "cat ./install.sh | sudo env MTPADMIN_RELEASE_REF=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb MTPADMIN_INSTALL_WIZARD_TEST=1 bash" /tmp/installer-pipe.log
+          cat > /tmp/answers-pipe <<'EOF'
+          proxy.example.com
+          203.0.113.10
+          8443
+          MAIN
+          google.com
+          7
+          400
+
+
+
+          mtpadmin.example.com
+          admin
+          1234567890x
+          1234567890x
+          webproxy.example.com
+          EOF
+          script -qefc "cat ./install.sh | sudo env MTPADMIN_RELEASE_REF=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb MTPADMIN_INSTALL_WIZARD_TEST=1 bash" /tmp/installer-pipe.log < /tmp/answers-pipe
           grep -Fq 'MTProto Proxy:          proxy.example.com:8443' /tmp/installer-pipe.log
           grep -Fq 'Installer interactive wizard test PASS' /tmp/installer-pipe.log
