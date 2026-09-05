@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.12.5'
+VERSION='0.12.4'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
@@ -231,7 +231,7 @@ bash -n "$TMP/base-install.sh" || die 'Преобразованный базов
 
 download_shell "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'установщик веб-панели'
 download_shell "$ROOT/$RELEASE_REF/update.sh" "$TMP/update-release.sh" 'текущий updater релиза'
-grep -Fq "VERSION='0.12.5'" "$TMP/update-release.sh" || die 'Скачанный updater не соответствует MTPADMIN 0.12.5.'
+grep -Fq "VERSION='0.12.4'" "$TMP/update-release.sh" || die 'Скачанный updater не соответствует MTPADMIN 0.12.4.'
 ok 'Все основные установочные файлы скачаны и прошли проверку синтаксиса.'
 
 if [[ "${MTPADMIN_INSTALL_PREFLIGHT_TEST:-0}" == 1 ]]; then
