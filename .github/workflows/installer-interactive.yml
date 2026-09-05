@@ -23,8 +23,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash -n install.sh
-          grep -Fq 'ask_into(){' install.sh
-          grep -Fq 'ask_secret_into(){' install.sh
+          grep -Fq 'ask(){' install.sh
+          grep -Fq 'ask_secret(){' install.sh
           grep -Fq 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
           if grep -Eq '\$\((ask|ask_secret)' install.sh; then
             echo 'Interactive ask must never run inside command substitution.' >&2
