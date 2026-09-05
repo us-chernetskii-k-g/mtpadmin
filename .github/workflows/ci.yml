@@ -34,8 +34,10 @@ jobs:
       - name: Version syntax and release pinning
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.4'
-          grep -q "VERSION='0.12.4'" update.sh
+          test "$(cat VERSION)" = '0.12.5'
+          grep -q "VERSION='0.12.5'" install.sh
+          grep -q "VERSION='0.12.5'" web-install.sh
+          grep -q "VERSION='0.12.5'" update.sh
           grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}' update.sh
           grep -q '_CLIENT_SCRIPT = _CLIENT_SCRIPT.replace' web/mtpadmin_web.d/45-ui-loop-fix.py
@@ -49,12 +51,22 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'MTPADMIN · ПЕРВОНАЧАЛЬНАЯ УСТАНОВКА' install.sh
-          grep -q "ask 'Домен обычного MTProto Proxy'" install.sh
-          grep -q "ask 'Домен веб-админки'" install.sh
+          grep -Fq "ask 'Домен обычного MTProto Proxy' \"\$HOST_DEFAULT\" PUBLIC_HOST" install.sh
+          grep -Fq "ask 'Домен веб-админки' \"\$WEB_DEFAULT\" WEB_HOST" install.sh
           grep -q 'Повторите пароль веб-админки' install.sh
-          grep -q "ask 'Домен Telegram WEB Proxy'" install.sh
+          grep -Fq "ask 'Домен Telegram WEB Proxy' \"\$WEBPROXY_DEFAULT\" WEBPROXY_HOST" install.sh
+          grep -q 'normal_host_inplace PUBLIC_HOST' install.sh
           grep -q 'Начать установку с этими параметрами' install.sh
           grep -q "предупреждения DNS?' 'N'" install.sh
+          grep -q 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
+          grep -q 'MTPADMIN_INSTALL_PREFLIGHT_TEST' install.sh
+          grep -q -- '--retry-all-errors' install.sh
+          grep -q 'download_shell' install.sh
+          awk '/^info .*Проверяю установочные файлы до изменения системы/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
+          if grep -Eq '\$\((ask|ask_secret)[[:space:]]' /tmp/installer-wizard-active.sh; then
+            echo 'Nested interactive command substitution returned to active wizard' >&2
+            exit 1
+          fi
           ! grep -q 'echo.*WEB_PASS' install.sh
 
       - name: Browser UI PWA and stable-session regression
@@ -62,8 +74,8 @@ jobs:
           python3 - <<'PY'
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.4'
-          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.4'}
+          w.VERSION='0.12.5'
+          w.state=lambda:{'PROFILE':'MAIN','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.5'}
           w.query=lambda *a,**kw:[]; w.scalar=lambda *a,**kw:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True
           w._o_health=lambda:(100,[['TeleMT','<span class="ok">PASS</span>']])
@@ -106,7 +118,7 @@ jobs:
           python3 - <<'PY'
           import importlib.util
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.4'
+          w.VERSION='0.12.5'
           w.state=lambda:{'PROFILE':'DEIMOS','WEBPROXY_SOURCE':'WEB_PROXY'}
           w._wpa_source_rows=lambda:[{'username':'DEIMOS','current_connections':4,'active_unique_ips':1},{'username':'WEB_PROXY','current_connections':0,'active_unique_ips':0}]
           w._wpa_metrics=lambda:{'tproxy_sessions_live':3,'tproxy_streams_live':8}; w._wpa_clients=lambda:[{'ip':'198.51.100.10','sessions':2},{'ip':'2001:db8::10','sessions':1}]
