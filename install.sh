@@ -17,6 +17,16 @@ die(){ echo "[FAIL] $*" >&2; exit 1; }
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
 warn(){ echo "[WARN] $*"; }
+download(){
+  local url="$1" dst="$2" label="$3" part="${dst}.part"
+  rm -f "$part"
+  curl -fL --proto '=https' --tlsv1.2 \
+    --connect-timeout 10 --max-time 180 \
+    --retry 5 --retry-delay 2 --retry-all-errors \
+    "$url" -o "$part" || die "Не удалось скачать $label."
+  [[ -s "$part" ]] || die "Скачанный $label пуст."
+  mv -f "$part" "$dst"
+}
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'Запустите через sudo/root.'
 [[ ! -e "$STATE" ]] || die 'MTPADMIN уже установлен. Используйте Центр обновлений или update.sh.'
@@ -25,7 +35,7 @@ command -v curl >/dev/null 2>&1 || die 'Не найден curl.'
 exec 3<>/dev/tty
 
 if [[ "$RELEASE_REF" == main ]]; then
-  resolved=$(curl -fsSL --retry 3 "$API/branches/main" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))' 2>/dev/null || true)
+  resolved=$(curl -fL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 --retry 5 --retry-delay 2 --retry-all-errors "$API/branches/main" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("commit") or {}).get("sha", ""))' 2>/dev/null || true)
   [[ "$resolved" =~ ^[0-9a-f]{40}$ ]] || die 'Не удалось зафиксировать версию main для установки.'
   RELEASE_REF="$resolved"
 fi
@@ -167,7 +177,7 @@ for host in "$PUBLIC_HOST" "$WEB_HOST" "$WEBPROXY_HOST"; do
 done
 confirm 'Продолжить даже если выше были предупреждения DNS?' 'N' || die 'Установка остановлена для исправления DNS.'
 
-curl -fsSL --retry 3 "$ROOT/$BASE_COMMIT/install.sh" -o "$TMP/base-install.sh" || die 'Не удалось скачать базовый установщик ядра.'
+download "$ROOT/$BASE_COMMIT/install.sh" "$TMP/base-install.sh" 'базовый установщик ядра'
 python3 - "$TMP/base-install.sh" "$ROOT/$RELEASE_REF" <<'PY'
 from pathlib import Path
 import sys
@@ -184,7 +194,7 @@ s=s.replace(old_ad,new_ad,1)
 p.write_text(s,encoding='utf-8')
 PY
 chmod 0700 "$TMP/base-install.sh"
-bash -n "$TMP/base-install.sh"
+bash -n "$TMP/base-install.sh" || die 'Базовый установщик ядра не прошёл проверку синтаксиса.'
 
 MTP_PUBLIC_HOST="$PUBLIC_HOST" \
 MTP_PUBLIC_IP="$PUBLIC_IP" \
@@ -222,9 +232,9 @@ with os.fdopen(fd,'w') as f:
 os.chmod(tmp,0o600); os.replace(tmp,p)
 PY
 
-curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web-install.sh" -o "$TMP/web-install.sh" || die 'Не удалось скачать зафиксированный установщик веб-панели.'
+download "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'зафиксированный установщик веб-панели'
 chmod 0700 "$TMP/web-install.sh"
-bash -n "$TMP/web-install.sh"
+bash -n "$TMP/web-install.sh" || die 'Установщик веб-панели не прошёл проверку синтаксиса.'
 MTPADMIN_RELEASE_REF="$RELEASE_REF" \
 MTPADMIN_WEB_HOST="$WEB_HOST" \
 MTPADMIN_WEB_USER="$WEB_USER" \
