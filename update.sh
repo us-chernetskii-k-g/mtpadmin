@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION='0.12.4'
+VERSION='0.12.5'
 BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 RELEASE_REF=${MTPADMIN_RELEASE_REF:-main}
@@ -15,8 +15,8 @@ info(){ echo "[INFO] $*"; }
 
 # Start from the audited 0.12.0 production chain. Its old dashboard guard is
 # intentionally skipped because analytics-plus owns the real `/` route and had
-# retained a stale renderer snapshot. 0.12.4 repairs the route and then applies
-# a final browser-stability layer that removes legacy background DOM mutation.
+# retained a stale renderer snapshot. 0.12.5 keeps the audited 0.12.4 browser
+# stability stack and publishes the hardened clean-installer release.
 curl -fsSL --retry 3 "$ROOT/$BASE_0120_COMMIT/update.sh" -o "$TMP/update-0120.sh" || die 'Не удалось скачать проверенный updater 0.12.0.'
 
 python3 - "$TMP/update-0120.sh" <<'PY'
@@ -25,29 +25,28 @@ import sys
 p=Path(sys.argv[1]); s=p.read_text(encoding='utf-8')
 if "VERSION='0.12.0'" not in s:
     raise SystemExit('unexpected immutable 0.12.0 updater')
-s=s.replace('0.12.0','0.12.4')
-# Keep the 0.12.0 transform that maps the old /active text marker to the
-# user-facing WEB-client sentence. Rewriting its source literal here would
-# make the nested updater search for the new text instead of the old one.
+s=s.replace('0.12.0','0.12.5')
+# Keep the old /active transformation semantics. Rewriting its source literal
+# would make the nested updater search for already-transformed text.
 old="grep -Fq 'Сервис работает стабильно' <<<\"$overview\" || die 'Новая главная страница не активна.'"
 if old not in s:
     raise SystemExit('old dashboard guard not found')
-s=s.replace(old, ": # 0.12.4 validates the repaired real dashboard route after rebinding", 1)
+s=s.replace(old, ": # 0.12.5 validates the repaired real dashboard route after rebinding", 1)
 p.write_text(s,encoding='utf-8')
 PY
 
-bash -n "$TMP/update-0120.sh" || die '0.12.4 сформировал невалидный базовый updater.'
-grep -q "VERSION='0.12.4'" "$TMP/update-0120.sh" || die 'Версия базового updater не обновилась до 0.12.4.'
+bash -n "$TMP/update-0120.sh" || die '0.12.5 сформировал невалидный базовый updater.'
+grep -q "VERSION='0.12.5'" "$TMP/update-0120.sh" || die 'Версия базового updater не обновилась до 0.12.5.'
 grep -q 'WEB_IDENTITY_BEFORE' "$TMP/update-0120.sh" || die 'Проверка сохранения WEB-ссылки потеряна.'
-grep -q '0.12.4 validates the repaired real dashboard route' "$TMP/update-0120.sh" || die 'Старый ошибочный dashboard guard не отключён.'
+grep -q '0.12.5 validates the repaired real dashboard route' "$TMP/update-0120.sh" || die 'Старый ошибочный dashboard guard не отключён.'
 
 case "${MTPADMIN_BOOTSTRAP_TEST:-0}" in
   2)
-    MTPADMIN_BOOTSTRAP_TEST=2 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh" || die 'Nested 0.12.4 updater transformation failed.'
-    ok 'Nested 0.12.4 updater transformation PASS'; exit 0 ;;
+    MTPADMIN_BOOTSTRAP_TEST=2 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh" || die 'Nested 0.12.5 updater transformation failed.'
+    ok 'Nested 0.12.5 updater transformation PASS'; exit 0 ;;
   1)
-    MTPADMIN_BOOTSTRAP_TEST=1 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh" || die '0.12.4 wrapper transformation failed.'
-    ok '0.12.4 wrapper transformation PASS'; exit 0 ;;
+    MTPADMIN_BOOTSTRAP_TEST=1 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh" || die '0.12.5 wrapper transformation failed.'
+    ok '0.12.5 wrapper transformation PASS'; exit 0 ;;
 esac
 
 MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh"
@@ -61,7 +60,7 @@ WEB_PORT=${WEB_ACTIVE_PORT:?}
 [[ "$WEB_PORT" =~ ^[0-9]+$ ]] || die 'Некорректный порт активной веб-панели.'
 [[ -f "$WEB_RELEASE" ]] || die 'Не найдена активная копия веб-панели.'
 
-info 'Подключаю стабильный пользовательский интерфейс 0.12.4...'
+info 'Подключаю стабильный пользовательский интерфейс 0.12.5...'
 FIX="$TMP/45-ui-loop-fix.py"
 PWA="$TMP/46-pwa.py"
 DASH="$TMP/47-dashboard-route-fix.py"
@@ -100,7 +99,7 @@ python3 -m py_compile "$PATCHED" || die 'Исправленная веб-пан�
 grep -Fq '# MTPADMIN 0.12.4 dashboard route binding fix.' "$PATCHED" || die 'Исправление маршрута обзора не встроилось.'
 grep -Fq '# MTPADMIN 0.12.4 browser stability guard.' "$PATCHED" || die 'Финальная защита браузера не встроилась.'
 
-BACKUP="${WEB_RELEASE}.before-0.12.4-browser-stability-$(date +%Y%m%d-%H%M%S)"
+BACKUP="${WEB_RELEASE}.before-0.12.5-clean-installer-$(date +%Y%m%d-%H%M%S)"
 cp -a "$WEB_RELEASE" "$BACKUP"
 install -m 0700 -o root -g root "$PATCHED" "$WEB_RELEASE"
 if ! systemctl restart "$WEB_SERVICE"; then
@@ -111,7 +110,7 @@ fi
 
 ready=0
 for _ in {1..30}; do
-  if curl -fsS --max-time 3 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT/healthz" >/dev/null 2>&1; then ready=1; break; fi
+  if curl -fsS --max-time 3 -H 'X-MTPADMIN-User: release-0125' "http://127.0.0.1:$WEB_PORT/healthz" >/dev/null 2>&1; then ready=1; break; fi
   sleep 1
 done
 if (( ready != 1 )); then
@@ -122,7 +121,7 @@ fi
 
 check_browser_page(){
   local path="$1" marker="$2" label="$3" html
-  html=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0124' "http://127.0.0.1:$WEB_PORT$path") || die "$label не отвечает после 0.12.4."
+  html=$(curl -fsS --max-time 8 -H 'X-MTPADMIN-User: release-0125' "http://127.0.0.1:$WEB_PORT$path") || die "$label не отвечает после 0.12.5."
   grep -Fq "$marker" <<<"$html" || die "$label не содержит ожидаемый пользовательский интерфейс."
   if grep -Fq 'new MutationObserver(' <<<"$html"; then die "$label всё ещё содержит MutationObserver."; fi
   if grep -Fq 'setInterval(' <<<"$html"; then die "$label всё ещё содержит фоновый setInterval."; fi
@@ -135,12 +134,12 @@ grep -Fq 'Быстрые действия' <<<"$OVERVIEW" || die 'Новая г�
 grep -Fq 'mtpadmin-client-ui' <<<"$OVERVIEW" || die 'Пользовательский интерфейс не активен.'
 grep -Fq 'rel="manifest" href="/manifest.webmanifest"' <<<"$OVERVIEW" || die 'PWA потерян после исправления интерфейса.'
 grep -Fq '● по запросу' <<<"$OVERVIEW" || die 'Интерфейс всё ещё обещает фоновое обновление.'
-grep -Fq 'версия 0.12.4' <<<"$OVERVIEW" || die 'Активная веб-панель показывает неверную версию.'
+grep -Fq 'версия 0.12.5' <<<"$OVERVIEW" || die 'Активная веб-панель показывает неверную версию.'
 
 OPERATIONS=$(check_browser_page '/operations' 'Управление сервисом' 'Страница управления')
 ACTIVE=$(check_browser_page '/active' 'WEB потоки' 'Страница активных клиентов')
 GEO=$(check_browser_page '/geo' 'География' 'Страница географии')
 grep -Fq 'world-map' <<<"$GEO" || die 'Карта потеряна после отключения MutationObserver.'
 
-/usr/local/bin/mtpadmin doctor || die 'Итоговая проверка MTPADMIN 0.12.4 обнаружила ошибку.'
-ok 'MTPADMIN 0.12.4 установлен: реальный маршрут обзора исправлен; фоновые DOM-перестройки отключены; PWA сохранён.'
+/usr/local/bin/mtpadmin doctor || die 'Итоговая проверка MTPADMIN 0.12.5 обнаружила ошибку.'
+ok 'MTPADMIN 0.12.5 установлен: clean-installer hardened; стабильный браузерный режим и PWA сохранены.'
