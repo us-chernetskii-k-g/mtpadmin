@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.12.2'
+VERSION='0.12.4'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
@@ -30,18 +30,18 @@ if [[ "$RELEASE_REF" == main ]]; then
   RELEASE_REF="$resolved"
 fi
 
-ask(){
-  local prompt="$1" def="${2:-}" out=''
+ask_into(){
+  local dest="$1" prompt="$2" def="${3:-}" out=''
   if [[ -n "$def" ]]; then printf '%s [%s]: ' "$prompt" "$def" >&3; else printf '%s: ' "$prompt" >&3; fi
   IFS= read -r -u 3 out || die 'Не удалось прочитать ответ.'
-  printf '%s' "${out:-$def}"
+  printf -v "$dest" '%s' "${out:-$def}"
 }
-ask_secret(){
-  local prompt="$1" out=''
+ask_secret_into(){
+  local dest="$1" prompt="$2" out=''
   printf '%s' "$prompt" >&3
   IFS= read -r -s -u 3 out || die 'Не удалось прочитать скрытое значение.'
   printf '\n' >&3
-  printf '%s' "$out"
+  printf -v "$dest" '%s' "$out"
 }
 confirm(){
   local prompt="$1" def="${2:-Y}" out=''
@@ -50,7 +50,11 @@ confirm(){
   out=${out:-$def}
   [[ "$out" =~ ^[YyДд]$ ]]
 }
-normal_host(){ local x="${1,,}"; x=${x#http://}; x=${x#https://}; x=${x%%/*}; x=${x%.}; printf '%s' "$x"; }
+normal_host_inplace(){
+  local dest="$1" x="${!1,,}"
+  x=${x#http://}; x=${x#https://}; x=${x%%/*}; x=${x%.}
+  printf -v "$dest" '%s' "$x"
+}
 valid_host(){ [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$1" == *.* && "$1" != *:* ]]; }
 base_domain(){
   local h="$1" n
@@ -74,38 +78,39 @@ cat >&3 <<'BANNER'
 
 BANNER
 
-PUBLIC_HOST=$(normal_host "${MTP_PUBLIC_HOST:-$(ask 'Домен обычного MTProto Proxy' "$HOST_DEFAULT")}")
-PUBLIC_IP="${MTP_PUBLIC_IP:-$(ask 'Публичный/NAT IPv4 сервера' "$LOCAL_IP")}"
-PORT="${MTP_PORT:-$(ask 'Порт MTProto Proxy' '8443')}"
-PROFILE="${MTP_PROFILE:-$(ask 'Имя первого источника' 'MAIN')}"
-FAKE_TLS_DOMAIN=$(normal_host "${MTP_FAKE_TLS_DOMAIN:-$(ask 'Домен маскировки FakeTLS' 'google.com')}")
-RETENTION_DAYS="${MTP_RETENTION_DAYS:-$(ask 'Хранить полные IP, дней' '7')}"
-ANON_RETENTION_DAYS="${MTP_ANON_RETENTION_DAYS:-$(ask 'Хранить обезличенную историю, дней' '400')}"
-PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL-}"
-if [[ -z "${MTP_PROMOTED_CHANNEL+x}" ]]; then PROMOTED_CHANNEL=$(ask 'Рекламируемый Telegram-канал (необязательно)' ''); fi
+if [[ -n "${MTP_PUBLIC_HOST:-}" ]]; then PUBLIC_HOST=$MTP_PUBLIC_HOST; else ask_into PUBLIC_HOST 'Домен обычного MTProto Proxy' "$HOST_DEFAULT"; fi
+normal_host_inplace PUBLIC_HOST
+if [[ -n "${MTP_PUBLIC_IP:-}" ]]; then PUBLIC_IP=$MTP_PUBLIC_IP; else ask_into PUBLIC_IP 'Публичный/NAT IPv4 сервера' "$LOCAL_IP"; fi
+if [[ -n "${MTP_PORT:-}" ]]; then PORT=$MTP_PORT; else ask_into PORT 'Порт MTProto Proxy' '8443'; fi
+if [[ -n "${MTP_PROFILE:-}" ]]; then PROFILE=$MTP_PROFILE; else ask_into PROFILE 'Имя первого источника' 'MAIN'; fi
+if [[ -n "${MTP_FAKE_TLS_DOMAIN:-}" ]]; then FAKE_TLS_DOMAIN=$MTP_FAKE_TLS_DOMAIN; else ask_into FAKE_TLS_DOMAIN 'Домен маскировки FakeTLS' 'google.com'; fi
+normal_host_inplace FAKE_TLS_DOMAIN
+if [[ -n "${MTP_RETENTION_DAYS:-}" ]]; then RETENTION_DAYS=$MTP_RETENTION_DAYS; else ask_into RETENTION_DAYS 'Хранить полные IP, дней' '7'; fi
+if [[ -n "${MTP_ANON_RETENTION_DAYS:-}" ]]; then ANON_RETENTION_DAYS=$MTP_ANON_RETENTION_DAYS; else ask_into ANON_RETENTION_DAYS 'Хранить обезличенную историю, дней' '400'; fi
+if [[ -n "${MTP_PROMOTED_CHANNEL+x}" ]]; then PROMOTED_CHANNEL=$MTP_PROMOTED_CHANNEL; else ask_into PROMOTED_CHANNEL 'Рекламируемый Telegram-канал (необязательно)' ''; fi
 
 RAW_SECRET="${MTP_RAW_SECRET:-}"
 RAW_SECRET_MODE='задан'
-if [[ -z "$RAW_SECRET" ]]; then
-  RAW_SECRET=$(ask_secret 'Существующий секрет 32 hex [Enter = создать новый]: ')
-fi
+if [[ -z "$RAW_SECRET" ]]; then ask_secret_into RAW_SECRET 'Существующий секрет 32 hex [Enter = создать новый]: '; fi
 if [[ -z "$RAW_SECRET" ]]; then RAW_SECRET=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); RAW_SECRET_MODE='создан автоматически'; fi
 RAW_SECRET=${RAW_SECRET,,}
 
-if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG=${MTP_AD_TAG,,}; else AD_TAG=$(ask 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' ''); AD_TAG=${AD_TAG,,}; fi
+if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG=${MTP_AD_TAG,,}; else ask_into AD_TAG 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' ''; AD_TAG=${AD_TAG,,}; fi
 
 BASE_DOMAIN=$(base_domain "$PUBLIC_HOST")
 WEB_DEFAULT="mtpadmin.$BASE_DOMAIN"
 WEBPROXY_DEFAULT="webproxy.$BASE_DOMAIN"
-WEB_HOST=$(normal_host "${MTPADMIN_WEB_HOST:-$(ask 'Домен веб-админки' "$WEB_DEFAULT")}")
-WEB_USER="${MTPADMIN_WEB_USER:-$(ask 'Логин администратора' 'admin')}"
+if [[ -n "${MTPADMIN_WEB_HOST:-}" ]]; then WEB_HOST=$MTPADMIN_WEB_HOST; else ask_into WEB_HOST 'Домен веб-админки' "$WEB_DEFAULT"; fi
+normal_host_inplace WEB_HOST
+if [[ -n "${MTPADMIN_WEB_USER:-}" ]]; then WEB_USER=$MTPADMIN_WEB_USER; else ask_into WEB_USER 'Логин администратора' 'admin'; fi
 WEB_PASS="${MTPADMIN_WEB_PASSWORD:-}"
 if [[ -z "$WEB_PASS" ]]; then
-  WEB_PASS=$(ask_secret 'Пароль веб-админки (минимум 10 символов): ')
-  WEB_PASS2=$(ask_secret 'Повторите пароль веб-админки: ')
+  ask_secret_into WEB_PASS 'Пароль веб-админки (минимум 10 символов): '
+  ask_secret_into WEB_PASS2 'Повторите пароль веб-админки: '
   [[ "$WEB_PASS" == "$WEB_PASS2" ]] || die 'Пароли веб-админки не совпадают.'
 fi
-WEBPROXY_HOST=$(normal_host "${MTPADMIN_WEBPROXY_HOST:-$(ask 'Домен Telegram WEB Proxy' "$WEBPROXY_DEFAULT")}")
+if [[ -n "${MTPADMIN_WEBPROXY_HOST:-}" ]]; then WEBPROXY_HOST=$MTPADMIN_WEBPROXY_HOST; else ask_into WEBPROXY_HOST 'Домен Telegram WEB Proxy' "$WEBPROXY_DEFAULT"; fi
+normal_host_inplace WEBPROXY_HOST
 
 valid_host "$PUBLIC_HOST" || die 'Некорректный домен MTProto Proxy.'
 valid_host "$WEB_HOST" || die 'Некорректный домен веб-админки.'
@@ -125,7 +130,7 @@ FREE_BUILD_KB=$(df -Pk /var/tmp | awk 'NR==2{print $4}')
 [[ "$FREE_BUILD_KB" =~ ^[0-9]+$ ]] || die 'Не удалось проверить свободное место.'
 ((FREE_BUILD_KB>=1048576)) || die "Для установки нужно минимум 1 ГиБ свободно на файловой системе /var/tmp; сейчас $((FREE_BUILD_KB/1024)) МБ."
 
-cat >&3 <<EOF
+cat >&3 <<EOF2
 
 ──────────────── ПАРАМЕТРЫ УСТАНОВКИ ────────────────
 MTProto Proxy:          $PUBLIC_HOST:$PORT
@@ -146,10 +151,14 @@ Telegram WEB Proxy:     https://$WEBPROXY_HOST/
 Версия:                 $VERSION · ${RELEASE_REF:0:12}
 Свободно на диске:      $((FREE_BUILD_KB/1024)) МБ
 ─────────────────────────────────────────────────────
-EOF
+EOF2
+
+if [[ "${MTPADMIN_INSTALL_WIZARD_TEST:-0}" == 1 ]]; then
+  ok 'Installer interactive wizard test PASS'
+  exit 0
+fi
 
 confirm 'Начать установку с этими параметрами?' 'Y' || die 'Установка отменена пользователем.'
-
 install -d -m 0711 -o root -g root "$BUILD_ROOT"
 
 for host in "$PUBLIC_HOST" "$WEB_HOST" "$WEBPROXY_HOST"; do
@@ -174,7 +183,8 @@ assert s.count(old_ad)==1
 s=s.replace(old_ad,new_ad,1)
 p.write_text(s,encoding='utf-8')
 PY
-chmod 0700 "$TMP/base-install.sh"; bash -n "$TMP/base-install.sh"
+chmod 0700 "$TMP/base-install.sh"
+bash -n "$TMP/base-install.sh"
 
 MTP_PUBLIC_HOST="$PUBLIC_HOST" \
 MTP_PUBLIC_IP="$PUBLIC_IP" \
@@ -207,12 +217,14 @@ for line in lines:
     else: out.append(line)
 if not done: out.append(f"{key}='{value}'")
 fd,tmp=tempfile.mkstemp(prefix='.state.',dir=str(p.parent),text=True)
-with os.fdopen(fd,'w') as f: f.write('\n'.join(out)+'\n'); f.flush(); os.fsync(f.fileno())
+with os.fdopen(fd,'w') as f:
+    f.write('\n'.join(out)+'\n'); f.flush(); os.fsync(f.fileno())
 os.chmod(tmp,0o600); os.replace(tmp,p)
 PY
 
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/web-install.sh" -o "$TMP/web-install.sh" || die 'Не удалось скачать зафиксированный установщик веб-панели.'
-chmod 0700 "$TMP/web-install.sh"; bash -n "$TMP/web-install.sh"
+chmod 0700 "$TMP/web-install.sh"
+bash -n "$TMP/web-install.sh"
 MTPADMIN_RELEASE_REF="$RELEASE_REF" \
 MTPADMIN_WEB_HOST="$WEB_HOST" \
 MTPADMIN_WEB_USER="$WEB_USER" \
