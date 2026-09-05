@@ -30,14 +30,14 @@ if [[ "$RELEASE_REF" == main ]]; then
   RELEASE_REF="$resolved"
 fi
 
-ask_into(){
-  local dest="$1" prompt="$2" def="${3:-}" out=''
+ask(){
+  local prompt="$1" def="${2:-}" dest="$3" out=''
   if [[ -n "$def" ]]; then printf '%s [%s]: ' "$prompt" "$def" >&3; else printf '%s: ' "$prompt" >&3; fi
   IFS= read -r -u 3 out || die 'Не удалось прочитать ответ.'
   printf -v "$dest" '%s' "${out:-$def}"
 }
-ask_secret_into(){
-  local dest="$1" prompt="$2" out=''
+ask_secret(){
+  local prompt="$1" dest="$2" out=''
   printf '%s' "$prompt" >&3
   IFS= read -r -s -u 3 out || die 'Не удалось прочитать скрытое значение.'
   printf '\n' >&3
@@ -78,38 +78,38 @@ cat >&3 <<'BANNER'
 
 BANNER
 
-if [[ -n "${MTP_PUBLIC_HOST:-}" ]]; then PUBLIC_HOST=$MTP_PUBLIC_HOST; else ask_into PUBLIC_HOST 'Домен обычного MTProto Proxy' "$HOST_DEFAULT"; fi
+if [[ -n "${MTP_PUBLIC_HOST:-}" ]]; then PUBLIC_HOST=$MTP_PUBLIC_HOST; else ask 'Домен обычного MTProto Proxy' "$HOST_DEFAULT" PUBLIC_HOST; fi
 normal_host_inplace PUBLIC_HOST
-if [[ -n "${MTP_PUBLIC_IP:-}" ]]; then PUBLIC_IP=$MTP_PUBLIC_IP; else ask_into PUBLIC_IP 'Публичный/NAT IPv4 сервера' "$LOCAL_IP"; fi
-if [[ -n "${MTP_PORT:-}" ]]; then PORT=$MTP_PORT; else ask_into PORT 'Порт MTProto Proxy' '8443'; fi
-if [[ -n "${MTP_PROFILE:-}" ]]; then PROFILE=$MTP_PROFILE; else ask_into PROFILE 'Имя первого источника' 'MAIN'; fi
-if [[ -n "${MTP_FAKE_TLS_DOMAIN:-}" ]]; then FAKE_TLS_DOMAIN=$MTP_FAKE_TLS_DOMAIN; else ask_into FAKE_TLS_DOMAIN 'Домен маскировки FakeTLS' 'google.com'; fi
+if [[ -n "${MTP_PUBLIC_IP:-}" ]]; then PUBLIC_IP=$MTP_PUBLIC_IP; else ask 'Публичный/NAT IPv4 сервера' "$LOCAL_IP" PUBLIC_IP; fi
+if [[ -n "${MTP_PORT:-}" ]]; then PORT=$MTP_PORT; else ask 'Порт MTProto Proxy' '8443' PORT; fi
+if [[ -n "${MTP_PROFILE:-}" ]]; then PROFILE=$MTP_PROFILE; else ask 'Имя первого источника' 'MAIN' PROFILE; fi
+if [[ -n "${MTP_FAKE_TLS_DOMAIN:-}" ]]; then FAKE_TLS_DOMAIN=$MTP_FAKE_TLS_DOMAIN; else ask 'Домен маскировки FakeTLS' 'google.com' FAKE_TLS_DOMAIN; fi
 normal_host_inplace FAKE_TLS_DOMAIN
-if [[ -n "${MTP_RETENTION_DAYS:-}" ]]; then RETENTION_DAYS=$MTP_RETENTION_DAYS; else ask_into RETENTION_DAYS 'Хранить полные IP, дней' '7'; fi
-if [[ -n "${MTP_ANON_RETENTION_DAYS:-}" ]]; then ANON_RETENTION_DAYS=$MTP_ANON_RETENTION_DAYS; else ask_into ANON_RETENTION_DAYS 'Хранить обезличенную историю, дней' '400'; fi
-if [[ -n "${MTP_PROMOTED_CHANNEL+x}" ]]; then PROMOTED_CHANNEL=$MTP_PROMOTED_CHANNEL; else ask_into PROMOTED_CHANNEL 'Рекламируемый Telegram-канал (необязательно)' ''; fi
+if [[ -n "${MTP_RETENTION_DAYS:-}" ]]; then RETENTION_DAYS=$MTP_RETENTION_DAYS; else ask 'Хранить полные IP, дней' '7' RETENTION_DAYS; fi
+if [[ -n "${MTP_ANON_RETENTION_DAYS:-}" ]]; then ANON_RETENTION_DAYS=$MTP_ANON_RETENTION_DAYS; else ask 'Хранить обезличенную историю, дней' '400' ANON_RETENTION_DAYS; fi
+if [[ -n "${MTP_PROMOTED_CHANNEL+x}" ]]; then PROMOTED_CHANNEL=$MTP_PROMOTED_CHANNEL; else ask 'Рекламируемый Telegram-канал (необязательно)' '' PROMOTED_CHANNEL; fi
 
 RAW_SECRET="${MTP_RAW_SECRET:-}"
 RAW_SECRET_MODE='задан'
-if [[ -z "$RAW_SECRET" ]]; then ask_secret_into RAW_SECRET 'Существующий секрет 32 hex [Enter = создать новый]: '; fi
+if [[ -z "$RAW_SECRET" ]]; then ask_secret 'Существующий секрет 32 hex [Enter = создать новый]: ' RAW_SECRET; fi
 if [[ -z "$RAW_SECRET" ]]; then RAW_SECRET=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); RAW_SECRET_MODE='создан автоматически'; fi
 RAW_SECRET=${RAW_SECRET,,}
 
-if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG=${MTP_AD_TAG,,}; else ask_into AD_TAG 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' ''; AD_TAG=${AD_TAG,,}; fi
+if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG=${MTP_AD_TAG,,}; else ask 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' '' AD_TAG; AD_TAG=${AD_TAG,,}; fi
 
 BASE_DOMAIN=$(base_domain "$PUBLIC_HOST")
 WEB_DEFAULT="mtpadmin.$BASE_DOMAIN"
 WEBPROXY_DEFAULT="webproxy.$BASE_DOMAIN"
-if [[ -n "${MTPADMIN_WEB_HOST:-}" ]]; then WEB_HOST=$MTPADMIN_WEB_HOST; else ask_into WEB_HOST 'Домен веб-админки' "$WEB_DEFAULT"; fi
+if [[ -n "${MTPADMIN_WEB_HOST:-}" ]]; then WEB_HOST=$MTPADMIN_WEB_HOST; else ask 'Домен веб-админки' "$WEB_DEFAULT" WEB_HOST; fi
 normal_host_inplace WEB_HOST
-if [[ -n "${MTPADMIN_WEB_USER:-}" ]]; then WEB_USER=$MTPADMIN_WEB_USER; else ask_into WEB_USER 'Логин администратора' 'admin'; fi
+if [[ -n "${MTPADMIN_WEB_USER:-}" ]]; then WEB_USER=$MTPADMIN_WEB_USER; else ask 'Логин администратора' 'admin' WEB_USER; fi
 WEB_PASS="${MTPADMIN_WEB_PASSWORD:-}"
 if [[ -z "$WEB_PASS" ]]; then
-  ask_secret_into WEB_PASS 'Пароль веб-админки (минимум 10 символов): '
-  ask_secret_into WEB_PASS2 'Повторите пароль веб-админки: '
+  ask_secret 'Пароль веб-админки (минимум 10 символов): ' WEB_PASS
+  ask_secret 'Повторите пароль веб-админки: ' WEB_PASS2
   [[ "$WEB_PASS" == "$WEB_PASS2" ]] || die 'Пароли веб-админки не совпадают.'
 fi
-if [[ -n "${MTPADMIN_WEBPROXY_HOST:-}" ]]; then WEBPROXY_HOST=$MTPADMIN_WEBPROXY_HOST; else ask_into WEBPROXY_HOST 'Домен Telegram WEB Proxy' "$WEBPROXY_DEFAULT"; fi
+if [[ -n "${MTPADMIN_WEBPROXY_HOST:-}" ]]; then WEBPROXY_HOST=$MTPADMIN_WEBPROXY_HOST; else ask 'Домен Telegram WEB Proxy' "$WEBPROXY_DEFAULT" WEBPROXY_HOST; fi
 normal_host_inplace WEBPROXY_HOST
 
 valid_host "$PUBLIC_HOST" || die 'Некорректный домен MTProto Proxy.'
