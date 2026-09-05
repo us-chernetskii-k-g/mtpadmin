@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - install.sh
+      - web-install.sh
+      - VERSION
       - .github/workflows/installer-interactive.yml
   pull_request:
     paths:
       - install.sh
+      - web-install.sh
+      - VERSION
       - .github/workflows/installer-interactive.yml
   workflow_dispatch:
 
@@ -18,15 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Syntax and prompt contract
+      - name: Syntax version and prompt contract
         shell: bash
         run: |
           set -Eeuo pipefail
-          bash -n install.sh
+          bash -n install.sh web-install.sh
+          test "$(cat VERSION)" = '0.12.4'
+          grep -Fq "VERSION='0.12.4'" install.sh
+          grep -Fq "VERSION='0.12.4'" web-install.sh
+          grep -Fq "VERSION='0.12.4'" update.sh
           grep -Fq 'ask(){' install.sh
           grep -Fq 'ask_secret(){' install.sh
           grep -Fq 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
-          awk '/^curl -fsSL --retry 3 "\$ROOT\/\$BASE_COMMIT\/install.sh"/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
+          grep -Fq -- "--retry-all-errors" install.sh
+          grep -Fq -- "--retry-all-errors" web-install.sh
+          awk '/^download "\$ROOT\/\$BASE_COMMIT\/install.sh"/{exit} {print}' install.sh > /tmp/installer-wizard-active.sh
           if grep -Eq '\$\((ask|ask_secret)' /tmp/installer-wizard-active.sh; then
             echo 'Interactive ask must never run inside command substitution.' >&2
             exit 1
