@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 077
 
-VERSION='0.12.4'
+VERSION='0.12.5'
 BASE_COMMIT='b5dcc69b9d4761e475c17ed7e692790c405d42f0'
 ROOT='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin'
 API='https://api.github.com/repos/us-chernetskii-k-g/mtpadmin'
@@ -17,20 +17,28 @@ die(){ echo "[FAIL] $*" >&2; exit 1; }
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
 warn(){ echo "[WARN] $*"; }
+
 download(){
   local url="$1" dst="$2" label="$3" part="${dst}.part"
   rm -f "$part"
   curl -fL --proto '=https' --tlsv1.2 \
-    --connect-timeout 10 --max-time 180 \
+    --connect-timeout 10 --max-time 240 \
     --retry 5 --retry-delay 2 --retry-all-errors \
     "$url" -o "$part" || die "Не удалось скачать $label."
   [[ -s "$part" ]] || die "Скачанный $label пуст."
   mv -f "$part" "$dst"
 }
 
+download_shell(){
+  local url="$1" dst="$2" label="$3"
+  download "$url" "$dst" "$label"
+  bash -n "$dst" || die "$label содержит синтаксическую ошибку."
+}
+
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die 'Запустите через sudo/root.'
 [[ ! -e "$STATE" ]] || die 'MTPADMIN уже установлен. Используйте Центр обновлений или update.sh.'
 command -v curl >/dev/null 2>&1 || die 'Не найден curl.'
+command -v python3 >/dev/null 2>&1 || die 'Не найден python3.'
 [[ -r /dev/tty && -w /dev/tty ]] || die 'Для первоначальной установки нужен интерактивный терминал (SSH/консоль).'
 exec 3<>/dev/tty
 
@@ -46,6 +54,7 @@ ask(){
   IFS= read -r -u 3 out || die 'Не удалось прочитать ответ.'
   printf -v "$dest" '%s' "${out:-$def}"
 }
+
 ask_secret(){
   local prompt="$1" dest="$2" out=''
   printf '%s' "$prompt" >&3
@@ -53,6 +62,7 @@ ask_secret(){
   printf '\n' >&3
   printf -v "$dest" '%s' "$out"
 }
+
 confirm(){
   local prompt="$1" def="${2:-Y}" out=''
   printf '%s [%s]: ' "$prompt" "$def" >&3
@@ -60,12 +70,18 @@ confirm(){
   out=${out:-$def}
   [[ "$out" =~ ^[YyДд]$ ]]
 }
+
 normal_host_inplace(){
   local dest="$1" x="${!1,,}"
-  x=${x#http://}; x=${x#https://}; x=${x%%/*}; x=${x%.}
+  x=${x#http://}
+  x=${x#https://}
+  x=${x%%/*}
+  x=${x%.}
   printf -v "$dest" '%s' "$x"
 }
+
 valid_host(){ [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$1" == *.* && "$1" != *:* ]]; }
+
 base_domain(){
   local h="$1" n
   n=$(awk -F. '{print NF-1}' <<<"$h")
@@ -105,7 +121,12 @@ if [[ -z "$RAW_SECRET" ]]; then ask_secret 'Существующий секре�
 if [[ -z "$RAW_SECRET" ]]; then RAW_SECRET=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); RAW_SECRET_MODE='создан автоматически'; fi
 RAW_SECRET=${RAW_SECRET,,}
 
-if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG=${MTP_AD_TAG,,}; else ask 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' '' AD_TAG; AD_TAG=${AD_TAG,,}; fi
+if [[ -n "${MTP_AD_TAG+x}" ]]; then
+  AD_TAG=${MTP_AD_TAG,,}
+else
+  ask 'Рекламная метка @MTProxyBot, 32 hex (необязательно)' '' AD_TAG
+  AD_TAG=${AD_TAG,,}
+fi
 
 BASE_DOMAIN=$(base_domain "$PUBLIC_HOST")
 WEB_DEFAULT="mtpadmin.$BASE_DOMAIN"
@@ -140,7 +161,7 @@ FREE_BUILD_KB=$(df -Pk /var/tmp | awk 'NR==2{print $4}')
 [[ "$FREE_BUILD_KB" =~ ^[0-9]+$ ]] || die 'Не удалось проверить свободное место.'
 ((FREE_BUILD_KB>=1048576)) || die "Для установки нужно минимум 1 ГиБ свободно на файловой системе /var/tmp; сейчас $((FREE_BUILD_KB/1024)) МБ."
 
-cat >&3 <<EOF2
+cat >&3 <<EOF_SUMMARY
 
 ──────────────── ПАРАМЕТРЫ УСТАНОВКИ ────────────────
 MTProto Proxy:          $PUBLIC_HOST:$PORT
@@ -161,7 +182,7 @@ Telegram WEB Proxy:     https://$WEBPROXY_HOST/
 Версия:                 $VERSION · ${RELEASE_REF:0:12}
 Свободно на диске:      $((FREE_BUILD_KB/1024)) МБ
 ─────────────────────────────────────────────────────
-EOF2
+EOF_SUMMARY
 
 if [[ "${MTPADMIN_INSTALL_WIZARD_TEST:-0}" == 1 ]]; then
   ok 'Installer interactive wizard test PASS'
@@ -169,32 +190,56 @@ if [[ "${MTPADMIN_INSTALL_WIZARD_TEST:-0}" == 1 ]]; then
 fi
 
 confirm 'Начать установку с этими параметрами?' 'Y' || die 'Установка отменена пользователем.'
-install -d -m 0711 -o root -g root "$BUILD_ROOT"
 
 for host in "$PUBLIC_HOST" "$WEB_HOST" "$WEBPROXY_HOST"; do
   resolved=$(getent ahostsv4 "$host" 2>/dev/null | awk 'NR==1{print $1}' || true)
-  if [[ -z "$resolved" ]]; then warn "DNS $host пока не разрешается."; elif [[ "$resolved" != "$PUBLIC_IP" ]]; then warn "DNS $host -> $resolved, ожидался $PUBLIC_IP."; else ok "DNS $host -> $PUBLIC_IP"; fi
+  if [[ -z "$resolved" ]]; then
+    warn "DNS $host пока не разрешается."
+  elif [[ "$resolved" != "$PUBLIC_IP" ]]; then
+    warn "DNS $host -> $resolved, ожидался $PUBLIC_IP."
+  else
+    ok "DNS $host -> $PUBLIC_IP"
+  fi
 done
 confirm 'Продолжить даже если выше были предупреждения DNS?' 'N' || die 'Установка остановлена для исправления DNS.'
 
-download "$ROOT/$BASE_COMMIT/install.sh" "$TMP/base-install.sh" 'базовый установщик ядра'
-python3 - "$TMP/base-install.sh" "$ROOT/$RELEASE_REF" <<'PY'
+info 'Проверяю установочные файлы до изменения системы...'
+download_shell "$ROOT/$BASE_COMMIT/install.sh" "$TMP/base-install.sh" 'базовый установщик ядра'
+python3 - "$TMP/base-install.sh" "$ROOT/$RELEASE_REF" <<'PY_BASE'
 from pathlib import Path
 import sys
 p=Path(sys.argv[1]); raw=sys.argv[2]
 s=p.read_text(encoding='utf-8')
 old="RAW_BASE='https://raw.githubusercontent.com/us-chernetskii-k-g/mtpadmin/main'"
-assert s.count(old)==1
+if s.count(old)!=1:
+    raise SystemExit('unexpected immutable base installer RAW_BASE marker')
 s=s.replace(old,"RAW_BASE='"+raw+"'",1)
-s=s.replace('PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL:-$(ask \'Рекламируемый канал (необязательно)\' \'\')}"','PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL-$(ask \'Рекламируемый канал (необязательно)\' \'\')}"',1)
+old_promoted='PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL:-$(ask \'Рекламируемый канал (необязательно)\' \'\')}"'
+new_promoted='PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL-$(ask \'Рекламируемый канал (необязательно)\' \'\')}"'
+if s.count(old_promoted)!=1:
+    raise SystemExit('unexpected immutable base installer promoted-channel marker')
+s=s.replace(old_promoted,new_promoted,1)
 old_ad='''AD_TAG="${MTP_AD_TAG:-}"\nif [[ -z "$AD_TAG" ]]; then AD_TAG=$(ask 'Advertising tag @MTProxyBot 32 hex (необязательно)' ''); fi'''
 new_ad='''if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG="$MTP_AD_TAG"; else AD_TAG=$(ask 'Advertising tag @MTProxyBot 32 hex (необязательно)' ''); fi'''
-assert s.count(old_ad)==1
+if s.count(old_ad)!=1:
+    raise SystemExit('unexpected immutable base installer ad-tag marker')
 s=s.replace(old_ad,new_ad,1)
+s=s.replace('curl -fsSL --retry 3 ', 'curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 240 ')
 p.write_text(s,encoding='utf-8')
-PY
-chmod 0700 "$TMP/base-install.sh"
-bash -n "$TMP/base-install.sh" || die 'Базовый установщик ядра не прошёл проверку синтаксиса.'
+PY_BASE
+bash -n "$TMP/base-install.sh" || die 'Преобразованный базовый установщик содержит синтаксическую ошибку.'
+
+download_shell "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'установщик веб-панели'
+download_shell "$ROOT/$RELEASE_REF/update.sh" "$TMP/update-release.sh" 'текущий updater релиза'
+grep -Fq "VERSION='0.12.5'" "$TMP/update-release.sh" || die 'Скачанный updater не соответствует MTPADMIN 0.12.5.'
+ok 'Все основные установочные файлы скачаны и прошли проверку синтаксиса.'
+
+if [[ "${MTPADMIN_INSTALL_PREFLIGHT_TEST:-0}" == 1 ]]; then
+  ok 'Installer payload preflight test PASS'
+  exit 0
+fi
+
+install -d -m 0711 -o root -g root "$BUILD_ROOT"
 
 MTP_PUBLIC_HOST="$PUBLIC_HOST" \
 MTP_PUBLIC_IP="$PUBLIC_IP" \
@@ -217,24 +262,28 @@ systemctl enable --now caddy >/dev/null 2>&1 || true
 [[ -f /etc/caddy/Caddyfile ]] || die 'Caddy установлен, но файл конфигурации отсутствует.'
 ok 'Caddy готов'
 
-python3 - "$STATE" "$WEBPROXY_HOST" <<'PY'
+python3 - "$STATE" "$WEBPROXY_HOST" <<'PY_STATE'
 from pathlib import Path
 import os,sys,tempfile
 p=Path(sys.argv[1]); value=sys.argv[2]; key='WEBPROXY_HOST'
 lines=p.read_text(encoding='utf-8').splitlines(); out=[]; done=False
 for line in lines:
-    if line.startswith(key+'='): out.append(f"{key}='{value}'"); done=True
-    else: out.append(line)
-if not done: out.append(f"{key}='{value}'")
+    if line.startswith(key+'='):
+        out.append(f"{key}='{value}'")
+        done=True
+    else:
+        out.append(line)
+if not done:
+    out.append(f"{key}='{value}'")
 fd,tmp=tempfile.mkstemp(prefix='.state.',dir=str(p.parent),text=True)
 with os.fdopen(fd,'w') as f:
-    f.write('\n'.join(out)+'\n'); f.flush(); os.fsync(f.fileno())
-os.chmod(tmp,0o600); os.replace(tmp,p)
-PY
+    f.write('\n'.join(out)+'\n')
+    f.flush()
+    os.fsync(f.fileno())
+os.chmod(tmp,0o600)
+os.replace(tmp,p)
+PY_STATE
 
-download "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'зафиксированный установщик веб-панели'
-chmod 0700 "$TMP/web-install.sh"
-bash -n "$TMP/web-install.sh" || die 'Установщик веб-панели не прошёл проверку синтаксиса.'
 MTPADMIN_RELEASE_REF="$RELEASE_REF" \
 MTPADMIN_WEB_HOST="$WEB_HOST" \
 MTPADMIN_WEB_USER="$WEB_USER" \
