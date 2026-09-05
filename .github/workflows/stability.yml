@@ -34,14 +34,18 @@ jobs:
       - name: Syntax and release contracts
         run: |
           set -euo pipefail
-          test "$(cat VERSION)" = '0.12.4'
-          grep -q "VERSION='0.12.4'" update.sh
+          test "$(cat VERSION)" = '0.12.5'
+          grep -q "VERSION='0.12.5'" install.sh
+          grep -q "VERSION='0.12.5'" web-install.sh
+          grep -q "VERSION='0.12.5'" update.sh
           grep -q "BASE_0120_COMMIT='6e6a7593b60452c1883e72269a340e97d088c0f3'" update.sh
           grep -q 'mtpadmin-client-ui' web/mtpadmin_web.d/44-webproxy-activity.py
           grep -q '# MTPADMIN 0.12.3 browser render-loop safety.' web/mtpadmin_web.d/45-ui-loop-fix.py
           grep -q '_PWA_MANIFEST' web/mtpadmin_web.d/46-pwa.py
           grep -q '_a_dashboard_html = dashboard_html' web/mtpadmin_web.d/47-dashboard-route-fix.py
           grep -q '# MTPADMIN 0.12.4 browser stability guard.' web/mtpadmin_web.d/48-browser-stability.py
+          grep -q 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
+          grep -q 'MTPADMIN_INSTALL_PREFLIGHT_TEST' install.sh
           bash -n /tmp/mtpadmin update.sh install.sh web-install.sh scripts/webproxy_install.sh scripts/webproxy_backend_install.sh scripts/webproxy_telemetry_install.sh scripts/component_update.sh scripts/scanner_watchdog.sh
           python3 -m py_compile /tmp/web.py /tmp/stats.py src/user_config.py src/scanner_guard.py scripts/update_check.py
 
@@ -84,8 +88,8 @@ jobs:
           python3 - <<'PY'
           import importlib.util,json
           spec=importlib.util.spec_from_file_location('w','/tmp/web.py'); w=importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
-          w.VERSION='0.12.4'
-          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.4'}
+          w.VERSION='0.12.5'
+          w.state=lambda:{'PROFILE':'A','WEBPROXY_SOURCE':'WEB_PROXY','WEBPROXY_HOST':'webproxy.example.com','WEBPROXY_READY':'1','MTPADMIN_VERSION':'0.12.5'}
           w.query=lambda *a,**k:[]; w.scalar=lambda *a,**k:0
           w._o_service=lambda *a:True; w._o_http_ok=lambda *a:True; w._o_health=lambda:(100,[['TeleMT','PASS']])
           w._o_update_status=lambda:{'components':{k:{'current':'1','latest':'1','available':False} for k in ('mtpadmin','telemt','webproxy')},'checked_at':1,'updates':0}
