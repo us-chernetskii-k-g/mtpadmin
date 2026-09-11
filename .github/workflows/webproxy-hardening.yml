@@ -32,6 +32,8 @@ jobs:
           grep -q 'write_status webproxy success' scripts/component_update_wrapper.sh
           grep -q 'component_update_legacy.sh' update.sh
           grep -q 'webproxy_update_hardening.sh' update.sh
+          grep -q 'webproxy_telemetry_install.sh' update.sh
+          grep -q 'atomic_replace_binary.*webproxy_telemetry_install.sh\|webproxy_telemetry_install.sh.*atomic_replace_binary' update.sh || grep -q "grep -Fq 'atomic_replace_binary' /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh" update.sh
           grep -q 'component_update_legacy.sh' install.sh
           grep -q 'webproxy_update_hardening.sh' install.sh
           grep -q 'not header Authorization \*' scripts/public_landings_install.sh
