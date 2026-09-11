@@ -79,6 +79,18 @@ wait_url(){
   return 1
 }
 
+# Never copy/truncate a running executable in place. Linux may reject that with
+# ETXTBSY. Stage the new inode in the same directory and atomically rename it.
+atomic_replace_binary(){
+  local source="$1" destination="$2" dir base staged
+  dir=$(dirname "$destination")
+  base=$(basename "$destination")
+  staged="$dir/.${base}.mtpadmin-new.$$"
+  rm -f -- "$staged"
+  install -m 0755 -o root -g root "$source" "$staged" || { rm -f -- "$staged"; return 1; }
+  mv -f -- "$staged" "$destination" || { rm -f -- "$staged"; return 1; }
+}
+
 ensure_token_key(){
   install -d -o root -g tproxy -m 0750 /etc/tproxy-server
   if [[ -L "$TOKEN_KEY" ]] || { [[ -e "$TOKEN_KEY" ]] && [[ ! -f "$TOKEN_KEY" ]]; }; then
@@ -166,14 +178,17 @@ was_ready=0; curl -fsS --max-time 3 "$ADMIN/readyz" >/dev/null 2>&1 && was_ready
 
 rollback(){
   warn 'Новый WEB Proxy не прошёл runtime/telemetry проверку; возвращаю предыдущий relay.'
-  install -m 0755 -o root -g root "$backup" "$BINARY"
+  if ! atomic_replace_binary "$backup" "$BINARY"; then
+    warn 'Не удалось атомарно восстановить предыдущий WEB relay binary.'
+  fi
   if [[ -f "$marker_backup" ]]; then cp -a "$marker_backup" "$MARKER"; else rm -f "$MARKER"; fi
   if [[ -f "$telemetry_backup" ]]; then cp -a "$telemetry_backup" "$TELEMETRY_MARKER"; else rm -f "$TELEMETRY_MARKER"; fi
   [[ -z "$old_state_commit" ]] || state_set WEBPROXY_TPROXY_COMMIT "$old_state_commit"
   systemctl restart "$SERVICE" >/dev/null 2>&1 || true
+  return 0
 }
 
-install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"
+atomic_replace_binary "$buildhome/tproxy-server.bin" "$BINARY" || die 'Не удалось атомарно установить новый WEB relay binary.'
 if ! systemctl restart "$SERVICE"; then rollback; die 'Новый WEB relay не запустился; выполнен rollback.'; fi
 if ! wait_url "$ADMIN/healthz"; then rollback; die 'Новый WEB relay не вышел в health; выполнен rollback.'; fi
 if (( was_ready == 1 )) && ! wait_url "$ADMIN/readyz"; then rollback; die 'Новый WEB relay потерял readiness; выполнен rollback.'; fi
