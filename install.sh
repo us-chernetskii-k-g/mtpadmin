@@ -219,7 +219,8 @@ new_promoted='PROMOTED_CHANNEL="${MTP_PROMOTED_CHANNEL-$(ask \'Рекламир�
 if s.count(old_promoted)!=1:
     raise SystemExit('unexpected immutable base installer promoted-channel marker')
 s=s.replace(old_promoted,new_promoted,1)
-old_ad='''AD_TAG="${MTP_AD_TAG:-}"\nif [[ -z "$AD_TAG" ]]; then AD_TAG=$(ask 'Advertising tag @MTProxyBot 32 hex (необязательно)' ''); fi'''
+old_ad='''AD_TAG="${MTP_AD_TAG:-}"
+if [[ -z "$AD_TAG" ]]; then AD_TAG=$(ask 'Advertising tag @MTProxyBot 32 hex (необязательно)' ''); fi'''
 new_ad='''if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG="$MTP_AD_TAG"; else AD_TAG=$(ask 'Advertising tag @MTProxyBot 32 hex (необязательно)' ''); fi'''
 if s.count(old_ad)!=1:
     raise SystemExit('unexpected immutable base installer ad-tag marker')
@@ -237,7 +238,11 @@ grep -Fq 'curl -fL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeou
 
 download_shell "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'установщик веб-панели'
 download_shell "$ROOT/$RELEASE_REF/update.sh" "$TMP/update-release.sh" 'текущий updater релиза'
+download_shell "$ROOT/$RELEASE_REF/scripts/component_update_wrapper.sh" "$TMP/component_update_wrapper.sh" 'compatibility wrapper Центра обновлений'
+download_shell "$ROOT/$RELEASE_REF/scripts/webproxy_update_hardening.sh" "$TMP/webproxy_update_hardening.sh" 'защищённый updater WEB Proxy'
+download_shell "$ROOT/$RELEASE_REF/scripts/public_landings_install.sh" "$TMP/public_landings_install.sh" 'repair публичных страниц'
 grep -Fq "VERSION='0.12.5'" "$TMP/update-release.sh" || die 'Скачанный updater не соответствует MTPADMIN 0.12.5.'
+grep -Fq 'atomic_replace_binary' "$TMP/webproxy_update_hardening.sh" || die 'WEB Proxy updater не содержит атомарную замену binary.'
 ok 'Все основные установочные файлы скачаны и прошли проверку синтаксиса.'
 
 if [[ "${MTPADMIN_INSTALL_PREFLIGHT_TEST:-0}" == 1 ]]; then
@@ -296,6 +301,19 @@ MTPADMIN_WEB_USER="$WEB_USER" \
 MTPADMIN_WEB_PASSWORD="$WEB_PASS" \
 MTPADMIN_WEBPROXY_HOST="$WEBPROXY_HOST" \
 bash "$TMP/web-install.sh"
+
+info 'Активирую защищённый updater WEB Proxy...'
+install -d -m 0755 -o root -g root /usr/local/lib/mtpadmin
+CURRENT_COMPONENT='/usr/local/lib/mtpadmin/component_update.sh'
+LEGACY_COMPONENT='/usr/local/lib/mtpadmin/component_update_legacy.sh'
+[[ -f "$CURRENT_COMPONENT" ]] || die 'После установки отсутствует component_update.sh.'
+cp -a "$CURRENT_COMPONENT" "$LEGACY_COMPONENT"
+chmod 0700 "$LEGACY_COMPONENT"
+install -m 0700 -o root -g root "$TMP/webproxy_update_hardening.sh" /usr/local/lib/mtpadmin/webproxy_update_hardening.sh
+install -m 0700 -o root -g root "$TMP/public_landings_install.sh" /usr/local/lib/mtpadmin/public_landings_install.sh
+install -m 0700 -o root -g root "$TMP/component_update_wrapper.sh" "$CURRENT_COMPONENT"
+grep -Fq 'component update compatibility wrapper 0.12.5' "$CURRENT_COMPONENT" || die 'Compatibility wrapper Центра обновлений не активирован.'
+ok 'Защищённый updater WEB Proxy активирован'
 
 unset WEB_PASS WEB_PASS2 MTPADMIN_WEB_PASSWORD MTP_RAW_SECRET RAW_SECRET
 ok "MTPADMIN $VERSION установлен: обычный MTProto + веб-панель + Telegram WEB Proxy + статистика + Центр обновлений."
