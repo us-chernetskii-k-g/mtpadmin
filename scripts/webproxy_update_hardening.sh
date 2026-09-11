@@ -116,7 +116,11 @@ ensure_token_key(){
 
 enable_first_upgrade_drain(){
   [[ -e "$TOKEN_KEY" ]] && return 0
-  local dir='/etc/systemd/system/tproxy-server.service.d' dropin="$dir/token-migration.conf" candidate="$TMP/token-migration.conf"
+  # With `set -u`, do not expand a local variable in the same `local` command
+  # that declares it: Bash expands arguments before the assignment is visible.
+  local dir='/etc/systemd/system/tproxy-server.service.d'
+  local dropin="$dir/token-migration.conf"
+  local candidate="$TMP/token-migration.conf"
   install -d -m 0755 -o root -g root "$dir"
   cat > "$candidate" <<'EOF'
 [Service]
