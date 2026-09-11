@@ -240,9 +240,11 @@ download_shell "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'уст
 download_shell "$ROOT/$RELEASE_REF/update.sh" "$TMP/update-release.sh" 'текущий updater релиза'
 download_shell "$ROOT/$RELEASE_REF/scripts/component_update_wrapper.sh" "$TMP/component_update_wrapper.sh" 'compatibility wrapper Центра обновлений'
 download_shell "$ROOT/$RELEASE_REF/scripts/webproxy_update_hardening.sh" "$TMP/webproxy_update_hardening.sh" 'защищённый updater WEB Proxy'
+download_shell "$ROOT/$RELEASE_REF/scripts/webproxy_telemetry_install.sh" "$TMP/webproxy_telemetry_install.sh" 'atomic telemetry installer WEB Proxy'
 download_shell "$ROOT/$RELEASE_REF/scripts/public_landings_install.sh" "$TMP/public_landings_install.sh" 'repair публичных страниц'
 grep -Fq "VERSION='0.12.5'" "$TMP/update-release.sh" || die 'Скачанный updater не соответствует MTPADMIN 0.12.5.'
 grep -Fq 'atomic_replace_binary' "$TMP/webproxy_update_hardening.sh" || die 'WEB Proxy updater не содержит атомарную замену binary.'
+grep -Fq 'atomic_replace_binary' "$TMP/webproxy_telemetry_install.sh" || die 'WEB telemetry updater не содержит атомарную замену binary.'
 ok 'Все основные установочные файлы скачаны и прошли проверку синтаксиса.'
 
 if [[ "${MTPADMIN_INSTALL_PREFLIGHT_TEST:-0}" == 1 ]]; then
@@ -310,9 +312,11 @@ LEGACY_COMPONENT='/usr/local/lib/mtpadmin/component_update_legacy.sh'
 cp -a "$CURRENT_COMPONENT" "$LEGACY_COMPONENT"
 chmod 0700 "$LEGACY_COMPONENT"
 install -m 0700 -o root -g root "$TMP/webproxy_update_hardening.sh" /usr/local/lib/mtpadmin/webproxy_update_hardening.sh
+install -m 0700 -o root -g root "$TMP/webproxy_telemetry_install.sh" /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh
 install -m 0700 -o root -g root "$TMP/public_landings_install.sh" /usr/local/lib/mtpadmin/public_landings_install.sh
 install -m 0700 -o root -g root "$TMP/component_update_wrapper.sh" "$CURRENT_COMPONENT"
 grep -Fq 'component update compatibility wrapper 0.12.5' "$CURRENT_COMPONENT" || die 'Compatibility wrapper Центра обновлений не активирован.'
+grep -Fq 'atomic_replace_binary' /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh || die 'Atomic WEB telemetry updater не активирован.'
 ok 'Защищённый updater WEB Proxy активирован'
 
 unset WEB_PASS WEB_PASS2 MTPADMIN_WEB_PASSWORD MTP_RAW_SECRET RAW_SECRET
