@@ -16,7 +16,7 @@ jobs:
       - name: Shell contracts
         run: |
           set -euo pipefail
-          bash -n scripts/webproxy_update_hardening.sh scripts/component_update_wrapper.sh scripts/public_landings_install.sh hotfix-webproxy.sh update.sh install.sh
+          bash -n scripts/webproxy_update_hardening.sh scripts/webproxy_telemetry_install.sh scripts/component_update_wrapper.sh scripts/public_landings_install.sh hotfix-webproxy.sh update.sh install.sh
           grep -q "TOKEN_KEY='/etc/tproxy-server/token.key'" scripts/webproxy_update_hardening.sh
           grep -q 'TPROXY_LEGACY_TOKEN_DRAIN=1' scripts/webproxy_update_hardening.sh
           grep -q 'wc -c < "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
@@ -24,6 +24,10 @@ jobs:
           grep -q 'atomic_replace_binary' scripts/webproxy_update_hardening.sh
           ! grep -Fq 'install -m 0755 -o root -g root "$backup" "$BINARY"' scripts/webproxy_update_hardening.sh
           ! grep -Fq 'install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"' scripts/webproxy_update_hardening.sh
+          grep -q 'atomic_replace_binary' scripts/webproxy_telemetry_install.sh
+          ! grep -Fq 'install -m 0755 -o root -g root "$candidate" "$BINARY"' scripts/webproxy_telemetry_install.sh
+          ! grep -Fq 'install -m 0755 -o root -g root "$rescue" "$BINARY"' scripts/webproxy_telemetry_install.sh
+          ! grep -Fq 'install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"' scripts/webproxy_telemetry_install.sh
           grep -q 'component update compatibility wrapper 0.12.5' scripts/component_update_wrapper.sh
           grep -q 'write_status webproxy success' scripts/component_update_wrapper.sh
           grep -q 'component_update_legacy.sh' update.sh
