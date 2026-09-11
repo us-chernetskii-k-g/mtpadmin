@@ -16,20 +16,28 @@ jobs:
       - name: Shell contracts
         run: |
           set -euo pipefail
-          bash -n scripts/webproxy_update_hardening.sh scripts/component_update_wrapper.sh scripts/public_landings_install.sh hotfix-webproxy.sh
+          bash -n scripts/webproxy_update_hardening.sh scripts/component_update_wrapper.sh scripts/public_landings_install.sh hotfix-webproxy.sh update.sh install.sh
           grep -q "TOKEN_KEY='/etc/tproxy-server/token.key'" scripts/webproxy_update_hardening.sh
           grep -q 'TPROXY_LEGACY_TOKEN_DRAIN=1' scripts/webproxy_update_hardening.sh
           grep -q 'wc -c < "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
           grep -q 'chmod 0400 "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
+          grep -q 'atomic_replace_binary' scripts/webproxy_update_hardening.sh
+          ! grep -Fq 'install -m 0755 -o root -g root "$backup" "$BINARY"' scripts/webproxy_update_hardening.sh
+          ! grep -Fq 'install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"' scripts/webproxy_update_hardening.sh
           grep -q 'component update compatibility wrapper 0.12.5' scripts/component_update_wrapper.sh
+          grep -q 'write_status webproxy success' scripts/component_update_wrapper.sh
+          grep -q 'component_update_legacy.sh' update.sh
+          grep -q 'webproxy_update_hardening.sh' update.sh
+          grep -q 'component_update_legacy.sh' install.sh
+          grep -q 'webproxy_update_hardening.sh' install.sh
           grep -q 'not header Authorization \*' scripts/public_landings_install.sh
           grep -q 'BRAKONDER Cloud' scripts/public_landings_install.sh
           grep -q 'BRAKONDER Access' scripts/public_landings_install.sh
 
-      - name: Build new upstream with MTPADMIN telemetry
+      - name: Build current upstream with MTPADMIN telemetry
         run: |
           set -euo pipefail
-          COMMIT=c0e9adf81abbd7559f0e15f4e1ffbcf71da720dc
+          COMMIT=acc252ece3a25c29e9b83f608499a5567a33ab2a
           rm -rf /tmp/tproxy-new
           git init -q /tmp/tproxy-new
           git -C /tmp/tproxy-new remote add origin https://github.com/telegramdesktop/tproxy-server.git
@@ -62,19 +70,43 @@ jobs:
           JSON
           /tmp/tproxy-server -config /tmp/config.json -profiles-file /tmp/profiles.json -check
 
-      - name: Old deployment must need token key on new upstream
+      - name: Reproduce old deployment token-key failure
         run: |
           set -euo pipefail
           cp /tmp/config.json /tmp/config-no-key.json
           python3 - <<'PY'
           import json
-          p='/tmp/config-no-key.json'; d=json.load(open(p)); d['token_key_file']='/tmp/missing-token.key'; open(p,'w').write(json.dumps(d))
+          p='/tmp/config-no-key.json'
+          d=json.load(open(p))
+          d['token_key_file']='/tmp/missing-token.key'
+          open(p,'w').write(json.dumps(d))
           PY
           if /tmp/tproxy-server -config /tmp/config-no-key.json -profiles-file /tmp/profiles.json -check; then
             echo 'new upstream unexpectedly accepted missing token key' >&2
             exit 1
           fi
           echo 'Missing-token-key regression reproduced as expected'
+
+      - name: Atomic running-binary replacement regression
+        run: |
+          set -euo pipefail
+          cat >/tmp/busy.c <<'C'
+          #include <unistd.h>
+          int main(void){ sleep(30); return 0; }
+          C
+          cc /tmp/busy.c -o /tmp/busy-bin
+          cp /tmp/busy-bin /tmp/busy-old
+          /tmp/busy-bin & pid=$!
+          sleep 1
+          if cp /tmp/busy-old /tmp/busy-bin 2>/tmp/cp.err; then
+            echo 'warning: platform allowed in-place copy; atomic contract still checked statically'
+          else
+            grep -Ei 'busy|text' /tmp/cp.err || true
+          fi
+          cp /tmp/busy-old /tmp/.busy-new
+          mv -f /tmp/.busy-new /tmp/busy-bin
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
 
       - name: Landing pages do not expose proxy internals to visitors
         run: |
