@@ -14,13 +14,15 @@ ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
 
 # The release updater intentionally reuses a chain of immutable historical
-# updaters. Harden every external HTTPS curl in that entire child-process tree
-# without changing local 127.0.0.1 health probes or installing a persistent
-# wrapper on the host.
+# updaters. Harden external network operations in that entire child-process
+# tree without changing local 127.0.0.1 health probes or installing any
+# persistent wrapper on the host.
 REAL_CURL=$(command -v curl || true)
 [[ -n "$REAL_CURL" ]] || die 'Не найден curl.'
+REAL_GIT=$(command -v git || true)
 NETBIN="$TMP/netbin"
 mkdir -p "$NETBIN"
+
 cat > "$NETBIN/curl" <<EOF_CURL_WRAPPER
 #!/usr/bin/env bash
 set -Eeuo pipefail
@@ -44,6 +46,30 @@ fi
 exec "\$real" "\$@"
 EOF_CURL_WRAPPER
 chmod 0700 "$NETBIN/curl"
+
+if [[ -n "$REAL_GIT" ]]; then
+  cat > "$NETBIN/git" <<EOF_GIT_WRAPPER
+#!/usr/bin/env bash
+set -Eeuo pipefail
+real='$REAL_GIT'
+is_fetch=0
+for arg in "\$@"; do
+  [[ "\$arg" == fetch ]] && is_fetch=1
+ done
+if (( ! is_fetch )); then
+  exec "\$real" "\$@"
+fi
+rc=1
+for attempt in 1 2 3 4 5; do
+  if "\$real" "\$@"; then exit 0; fi
+  rc=\$?
+  (( attempt < 5 )) && sleep \$((attempt * 2))
+done
+exit "\$rc"
+EOF_GIT_WRAPPER
+  chmod 0700 "$NETBIN/git"
+fi
+
 export PATH="$NETBIN:$PATH"
 export MTPADMIN_NETWORK_HARDENING=1
 
