@@ -13,6 +13,40 @@ die(){ echo "[FAIL] $*" >&2; exit 1; }
 ok(){ echo "[PASS] $*"; }
 info(){ echo "[INFO] $*"; }
 
+# The release updater intentionally reuses a chain of immutable historical
+# updaters. Harden every external HTTPS curl in that entire child-process tree
+# without changing local 127.0.0.1 health probes or installing a persistent
+# wrapper on the host.
+REAL_CURL=$(command -v curl || true)
+[[ -n "$REAL_CURL" ]] || die 'Не найден curl.'
+NETBIN="$TMP/netbin"
+mkdir -p "$NETBIN"
+cat > "$NETBIN/curl" <<EOF_CURL_WRAPPER
+#!/usr/bin/env bash
+set -Eeuo pipefail
+real='$REAL_CURL'
+https=0
+has_connect=0
+has_max=0
+for arg in "\$@"; do
+  case "\$arg" in
+    https://*) https=1 ;;
+    --connect-timeout|--connect-timeout=*) has_connect=1 ;;
+    --max-time|--max-time=*|-m|-m[0-9]*) has_max=1 ;;
+  esac
+done
+if (( https )); then
+  extra=(--retry 5 --retry-delay 2 --retry-all-errors)
+  (( has_connect )) || extra+=(--connect-timeout 15)
+  (( has_max )) || extra+=(--max-time 240)
+  exec "\$real" "\$@" "\${extra[@]}"
+fi
+exec "\$real" "\$@"
+EOF_CURL_WRAPPER
+chmod 0700 "$NETBIN/curl"
+export PATH="$NETBIN:$PATH"
+export MTPADMIN_NETWORK_HARDENING=1
+
 # Start from the audited 0.12.0 production chain. Its old dashboard guard is
 # intentionally skipped because analytics-plus owns the real `/` route and had
 # retained a stale renderer snapshot. 0.12.5 keeps the audited 0.12.4 browser
