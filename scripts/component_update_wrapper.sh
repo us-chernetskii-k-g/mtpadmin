@@ -31,15 +31,21 @@ case "${1:-}" in
   webproxy)
     [[ -x "$HARDENING" ]] || { write_status webproxy failed 'WEB Proxy hardening updater missing'; echo '[FAIL] WEB Proxy hardening updater missing' >&2; exit 1; }
     write_status webproxy running 'Безопасное обновление relay: build, token key, rollback и telemetry'
-    if ! "$HARDENING"; then
+    if "$HARDENING"; then
+      :
+    else
       rc=$?
       write_status webproxy failed "Безопасное обновление WEB Proxy завершилось ошибкой, rc=$rc"
       exit "$rc"
     fi
-    if [[ -x "$LANDINGS" ]] && ! "$LANDINGS" --webproxy-only; then
-      rc=$?
-      write_status webproxy failed "WEB Proxy обновлён, но landing repair завершился ошибкой, rc=$rc"
-      exit "$rc"
+    if [[ -x "$LANDINGS" ]]; then
+      if "$LANDINGS" --webproxy-only; then
+        :
+      else
+        rc=$?
+        write_status webproxy failed "WEB Proxy обновлён, но landing repair завершился ошибкой, rc=$rc"
+        exit "$rc"
+      fi
     fi
     commit=$(tr -d '\r\n' </usr/local/lib/mtpadmin/tproxy-server.commit 2>/dev/null || true)
     write_status webproxy success "WEB Proxy ${commit:0:12} READY; persistent token key + telemetry PASS"
