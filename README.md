@@ -37,13 +37,6 @@
       <sub><b>География</b> — страны и распределение подключений.</sub>
     </td>
   </tr>
-  <tr>
-    
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/statistics.webp" alt="Статистика MTPADMIN"><br>
-      <sub><b>Статистика</b> — онлайн, трафик и динамика за выбранный период.</sub>
-    </td>
-  </tr>
 </table>
 
 ---
