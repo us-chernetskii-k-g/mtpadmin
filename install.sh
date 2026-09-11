@@ -39,6 +39,12 @@ download_shell(){
 [[ ! -e "$STATE" ]] || die 'MTPADMIN уже установлен. Используйте Центр обновлений или update.sh.'
 command -v curl >/dev/null 2>&1 || die 'Не найден curl.'
 command -v python3 >/dev/null 2>&1 || die 'Не найден python3.'
+command -v systemctl >/dev/null 2>&1 || die 'Нужен systemd.'
+command -v apt-get >/dev/null 2>&1 || die 'Clean installer поддерживает Debian/Ubuntu (apt).'
+case "$(uname -m)" in
+  x86_64|amd64|aarch64|arm64) ;;
+  *) die "Архитектура $(uname -m) пока не поддерживается prebuilt TeleMT." ;;
+esac
 [[ -r /dev/tty && -w /dev/tty ]] || die 'Для первоначальной установки нужен интерактивный терминал (SSH/консоль).'
 exec 3<>/dev/tty
 
@@ -80,7 +86,28 @@ normal_host_inplace(){
   printf -v "$dest" '%s' "$x"
 }
 
-valid_host(){ [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ && "$1" == *.* && "$1" != *:* ]]; }
+valid_host(){
+  local host="$1" label
+  local -a labels=()
+  [[ ${#host} -le 253 && "$host" == *.* && "$host" != *:* && "$host" != *..* ]] || return 1
+  IFS='.' read -r -a labels <<<"$host"
+  ((${#labels[@]} >= 2)) || return 1
+  for label in "${labels[@]}"; do
+    [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+  done
+}
+
+valid_ipv4(){
+  local ip="$1" octet
+  local -a octets=()
+  IFS='.' read -r -a octets <<<"$ip"
+  ((${#octets[@]} == 4)) || return 1
+  for octet in "${octets[@]}"; do
+    [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+    ((10#$octet <= 255)) || return 1
+  done
+}
 
 base_domain(){
   local h="$1" n
@@ -144,10 +171,11 @@ if [[ -n "${MTPADMIN_WEBPROXY_HOST:-}" ]]; then WEBPROXY_HOST=$MTPADMIN_WEBPROXY
 normal_host_inplace WEBPROXY_HOST
 
 valid_host "$PUBLIC_HOST" || die 'Некорректный домен MTProto Proxy.'
+valid_host "$FAKE_TLS_DOMAIN" || die 'Некорректный домен FakeTLS.'
 valid_host "$WEB_HOST" || die 'Некорректный домен веб-админки.'
 valid_host "$WEBPROXY_HOST" || die 'Некорректный домен Telegram WEB Proxy.'
 [[ "$WEB_HOST" != "$WEBPROXY_HOST" ]] || die 'Домен веб-админки и WEB Proxy должны отличаться.'
-[[ "$PUBLIC_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die 'Некорректный IPv4.'
+valid_ipv4 "$PUBLIC_IP" || die 'Некорректный IPv4.'
 [[ "$PORT" =~ ^[0-9]+$ ]] && ((PORT>=1 && PORT<=65535)) || die 'Порт должен быть 1..65535.'
 [[ "$PROFILE" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || die 'Имя источника: A-Z a-z 0-9 _ . - до 64 символов.'
 [[ "$RAW_SECRET" =~ ^[0-9a-f]{32}$ ]] || die 'Секрет должен быть ровно 32 hex.'
