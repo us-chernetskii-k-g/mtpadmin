@@ -117,11 +117,13 @@ MTPADMIN_RELEASE_REF="$RELEASE_REF" bash "$TMP/update-0120.sh"
 info 'Подключаю защищённый Центр обновлений WEB Proxy...'
 COMPONENT_WRAPPER="$TMP/component_update_wrapper.sh"
 WEBPROXY_HARDENING="$TMP/webproxy_update_hardening.sh"
+WEBPROXY_TELEMETRY="$TMP/webproxy_telemetry_install.sh"
 PUBLIC_LANDINGS="$TMP/public_landings_install.sh"
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/component_update_wrapper.sh" -o "$COMPONENT_WRAPPER" || die 'Не удалось скачать compatibility wrapper Центра обновлений.'
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/webproxy_update_hardening.sh" -o "$WEBPROXY_HARDENING" || die 'Не удалось скачать hardened updater WEB Proxy.'
+curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/webproxy_telemetry_install.sh" -o "$WEBPROXY_TELEMETRY" || die 'Не удалось скачать atomic telemetry installer WEB Proxy.'
 curl -fsSL --retry 3 "$ROOT/$RELEASE_REF/scripts/public_landings_install.sh" -o "$PUBLIC_LANDINGS" || die 'Не удалось скачать repair публичных страниц.'
-bash -n "$COMPONENT_WRAPPER" "$WEBPROXY_HARDENING" "$PUBLIC_LANDINGS" || die 'Runtime Центра обновлений содержит синтаксическую ошибку.'
+bash -n "$COMPONENT_WRAPPER" "$WEBPROXY_HARDENING" "$WEBPROXY_TELEMETRY" "$PUBLIC_LANDINGS" || die 'Runtime Центра обновлений содержит синтаксическую ошибку.'
 install -d -m 0755 -o root -g root /usr/local/lib/mtpadmin
 CURRENT_COMPONENT='/usr/local/lib/mtpadmin/component_update.sh'
 LEGACY_COMPONENT='/usr/local/lib/mtpadmin/component_update_legacy.sh'
@@ -133,10 +135,12 @@ else
   chmod 0700 "$LEGACY_COMPONENT"
 fi
 install -m 0700 -o root -g root "$WEBPROXY_HARDENING" /usr/local/lib/mtpadmin/webproxy_update_hardening.sh
+install -m 0700 -o root -g root "$WEBPROXY_TELEMETRY" /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh
 install -m 0700 -o root -g root "$PUBLIC_LANDINGS" /usr/local/lib/mtpadmin/public_landings_install.sh
 install -m 0700 -o root -g root "$COMPONENT_WRAPPER" "$CURRENT_COMPONENT"
 grep -Fq 'component update compatibility wrapper 0.12.5' "$CURRENT_COMPONENT" || die 'Compatibility wrapper Центра обновлений не активирован.'
 grep -Fq 'atomic_replace_binary' /usr/local/lib/mtpadmin/webproxy_update_hardening.sh || die 'Hardened updater не содержит атомарную замену relay binary.'
+grep -Fq 'atomic_replace_binary' /usr/local/lib/mtpadmin/webproxy_telemetry_install.sh || die 'Telemetry updater не содержит атомарную замену relay binary.'
 ok 'Защищённый updater WEB Proxy активирован'
 
 [[ -f /etc/mtpadmin/web-runtime.env ]] || die 'Не найдено состояние активной веб-панели.'
