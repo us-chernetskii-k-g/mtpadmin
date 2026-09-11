@@ -33,6 +33,12 @@ jobs:
           ! grep -Fq 'install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"' scripts/webproxy_telemetry_install.sh
           grep -q 'component update compatibility wrapper 0.12.5' scripts/component_update_wrapper.sh
           grep -q 'write_status webproxy success' scripts/component_update_wrapper.sh
+          grep -q "UPDATE_STATUS='/var/lib/mtpadmin/update-status.json'" scripts/component_update_wrapper.sh
+          grep -q 'refresh_webproxy_snapshot' scripts/component_update_wrapper.sh
+          grep -Fq 'refresh_webproxy_snapshot "$commit"' scripts/component_update_wrapper.sh
+          grep -Fq "webproxy['current']=commit" scripts/component_update_wrapper.sh
+          grep -Fq "data['updates']=sum" scripts/component_update_wrapper.sh
+          grep -q "marker=Path('/usr/local/lib/mtpadmin/tproxy-server.commit')" scripts/update_check.py
           grep -q 'component_update_legacy.sh' update.sh
           grep -q 'webproxy_update_hardening.sh' update.sh
           grep -q 'webproxy_telemetry_install.sh' update.sh
