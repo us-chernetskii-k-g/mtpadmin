@@ -38,10 +38,7 @@
     </td>
   </tr>
   <tr>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/operations.webp" alt="Центр обновлений MTPADMIN"><br>
-      <sub><b>Обновления</b> — состояние компонентов и обновление из панели.</sub>
-    </td>
+    
     <td width="50%" valign="top">
       <img src="docs/screenshots/statistics.webp" alt="Статистика MTPADMIN"><br>
       <sub><b>Статистика</b> — онлайн, трафик и динамика за выбранный период.</sub>
