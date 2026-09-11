@@ -23,6 +23,16 @@ info(){ echo "[INFO] $*"; }
 warn(){ echo "[WARN] $*"; }
 die(){ echo "[FAIL] $*" >&2; exit 1; }
 
+atomic_replace_binary(){
+  local source="$1" destination="$2" dir base staged
+  dir=$(dirname "$destination")
+  base=$(basename "$destination")
+  staged="$dir/.${base}.mtpadmin-telemetry-new.$$"
+  rm -f -- "$staged"
+  install -m 0755 -o root -g root "$source" "$staged" || { rm -f -- "$staged"; return 1; }
+  mv -f -- "$staged" "$destination" || { rm -f -- "$staged"; return 1; }
+}
+
 resolve_go(){
   go_binary=''
   if command -v go >/dev/null 2>&1; then
@@ -109,9 +119,10 @@ restore_patched_backup(){
     [[ -n "$candidate" ]] || continue; binary_has_telemetry "$candidate" || continue
     "$candidate" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null 2>&1 || continue
     info "Нашёл готовый telemetry binary в backup: $(basename "$candidate")"
-    install -m 0755 -o root -g root "$candidate" "$BINARY"
+    atomic_replace_binary "$candidate" "$BINARY" || continue
     if systemctl restart tproxy-server.service >/dev/null 2>&1 && wait_endpoint; then write_marker; restored=1; break; fi
-    install -m 0755 -o root -g root "$rescue" "$BINARY"; systemctl restart tproxy-server.service >/dev/null 2>&1 || true
+    atomic_replace_binary "$rescue" "$BINARY" || true
+    systemctl restart tproxy-server.service >/dev/null 2>&1 || true
   done < <(find /var/backups/mtpadmin -maxdepth 1 -type f -name "tproxy-server-before-${commit:0:12}-*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | cut -d' ' -f2-)
   (( restored == 1 ))
 }
@@ -137,8 +148,8 @@ info "Собираю tproxy-server ${commit:0:12} + WEB client telemetry (disk-b
 chmod 0755 "$buildhome/tproxy-server.bin"; "$buildhome/tproxy-server.bin" -config "$TPROXY_CFG" -profiles-file "$TPROXY_PROFILES" -check >/dev/null || die 'Telemetry build не принял production config.'
 
 install -d -m 0700 /var/backups/mtpadmin; backup="/var/backups/mtpadmin/tproxy-server-before-telemetry-${commit:0:12}-$(date +%Y%m%d-%H%M%S)"; cp -a "$BINARY" "$backup"
-rollback(){ warn 'Telemetry relay не прошёл runtime-проверку; возвращаю предыдущий binary.'; cp -a "$backup" "$BINARY"; systemctl restart tproxy-server.service >/dev/null 2>&1 || true; }
-install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"
+rollback(){ warn 'Telemetry relay не прошёл runtime-проверку; возвращаю предыдущий binary.'; atomic_replace_binary "$backup" "$BINARY" || warn 'Не удалось атомарно вернуть предыдущий telemetry binary.'; systemctl restart tproxy-server.service >/dev/null 2>&1 || true; }
+atomic_replace_binary "$buildhome/tproxy-server.bin" "$BINARY" || die 'Не удалось атомарно установить telemetry relay.'
 if ! systemctl restart tproxy-server.service; then rollback; die 'Не удалось запустить telemetry relay.'; fi
 if ! wait_endpoint; then rollback; die 'Telemetry endpoint не вышел в READY.'; fi
 write_marker; ok "WEB client telemetry READY: /mtpadmin/clients · ${commit:0:12} · $PATCH_LEVEL"
