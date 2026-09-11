@@ -36,6 +36,11 @@ jobs:
           grep -Fq 'ask(){' install.sh
           grep -Fq 'ask_secret(){' install.sh
           grep -Fq 'normal_host_inplace(){' install.sh
+          grep -Fq 'valid_host(){' install.sh
+          grep -Fq 'valid_ipv4(){' install.sh
+          grep -Fq 'valid_host "$FAKE_TLS_DOMAIN"' install.sh
+          grep -Fq 'command -v systemctl' install.sh
+          grep -Fq 'command -v apt-get' install.sh
           grep -Fq 'MTPADMIN_INSTALL_WIZARD_TEST' install.sh
           grep -Fq 'MTPADMIN_INSTALL_PREFLIGHT_TEST' install.sh
           grep -Fq -- '--retry-all-errors' install.sh
@@ -101,6 +106,30 @@ jobs:
           script -qefc "cat ./install.sh | sudo env MTPADMIN_RELEASE_REF=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb MTPADMIN_INSTALL_WIZARD_TEST=1 bash" /tmp/installer-pipe.log < /tmp/answers-pipe
           grep -Fq 'MTProto Proxy:          proxy.example.com:8443' /tmp/installer-pipe.log
           grep -Fq 'Installer interactive wizard test PASS' /tmp/installer-pipe.log
+
+      - name: Reject malformed public inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          common='MTPADMIN_RELEASE_REF=cccccccccccccccccccccccccccccccccccccccc MTP_PORT=8443 MTP_PROFILE=MAIN MTP_FAKE_TLS_DOMAIN=google.com MTP_RETENTION_DAYS=7 MTP_ANON_RETENTION_DAYS=400 MTP_PROMOTED_CHANNEL= MTP_RAW_SECRET=00112233445566778899aabbccddeeff MTP_AD_TAG= MTPADMIN_WEB_HOST=mtpadmin.example.com MTPADMIN_WEB_USER=admin MTPADMIN_WEB_PASSWORD=1234567890x MTPADMIN_WEBPROXY_HOST=webproxy.example.com MTPADMIN_INSTALL_WIZARD_TEST=1'
+
+          if script -qefc "sudo env $common MTP_PUBLIC_HOST=proxy.example.com MTP_PUBLIC_IP=999.999.999.999 bash ./install.sh" /tmp/installer-bad-ip.log </dev/null; then
+            echo 'Malformed IPv4 unexpectedly accepted.' >&2
+            exit 1
+          fi
+          grep -Fq 'Некорректный IPv4.' /tmp/installer-bad-ip.log
+
+          if script -qefc "sudo env $common MTP_PUBLIC_HOST=proxy..example.com MTP_PUBLIC_IP=203.0.113.10 bash ./install.sh" /tmp/installer-bad-host.log </dev/null; then
+            echo 'Malformed hostname unexpectedly accepted.' >&2
+            exit 1
+          fi
+          grep -Fq 'Некорректный домен MTProto Proxy.' /tmp/installer-bad-host.log
+
+          if script -qefc "sudo env $common MTP_PUBLIC_HOST=proxy.example.com MTP_PUBLIC_IP=203.0.113.10 MTP_FAKE_TLS_DOMAIN=-google.com bash ./install.sh" /tmp/installer-bad-faketls.log </dev/null; then
+            echo 'Malformed FakeTLS hostname unexpectedly accepted.' >&2
+            exit 1
+          fi
+          grep -Fq 'Некорректный домен FakeTLS.' /tmp/installer-bad-faketls.log
 
       - name: Release-pinned payload preflight
         shell: bash
