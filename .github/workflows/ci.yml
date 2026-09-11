@@ -162,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           grep -q 'свой Telegram Proxy с веб' README.md
-          grep -q 'Новый Telegram WEB Proxy' README.md
+          grep -q 'Telegram WEB Proxy' README.md
           grep -q 'https://t.me/boss_of_this_vpn' README.md
           python3 - <<'PY'
           import pathlib,re
