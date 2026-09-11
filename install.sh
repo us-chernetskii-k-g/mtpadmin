@@ -224,10 +224,16 @@ new_ad='''if [[ -n "${MTP_AD_TAG+x}" ]]; then AD_TAG="$MTP_AD_TAG"; else AD_TAG=
 if s.count(old_ad)!=1:
     raise SystemExit('unexpected immutable base installer ad-tag marker')
 s=s.replace(old_ad,new_ad,1)
+old_telemt='curl -fL --retry 3 --connect-timeout 15 --max-time 240 "$url" -o "$archive"'
+new_telemt='curl -fL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 15 --max-time 240 "$url" -o "$archive"'
+if s.count(old_telemt)!=1:
+    raise SystemExit('unexpected immutable base installer TeleMT download marker')
+s=s.replace(old_telemt,new_telemt,1)
 s=s.replace('curl -fsSL --retry 3 ', 'curl -fsSL --retry 5 --retry-all-errors --connect-timeout 15 --max-time 240 ')
 p.write_text(s,encoding='utf-8')
 PY_BASE
 bash -n "$TMP/base-install.sh" || die 'Преобразованный базовый установщик содержит синтаксическую ошибку.'
+grep -Fq 'curl -fL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 15 --max-time 240 "$url" -o "$archive"' "$TMP/base-install.sh" || die 'Загрузка TeleMT не получила устойчивую политику повторных попыток.'
 
 download_shell "$ROOT/$RELEASE_REF/web-install.sh" "$TMP/web-install.sh" 'установщик веб-панели'
 download_shell "$ROOT/$RELEASE_REF/update.sh" "$TMP/update-release.sh" 'текущий updater релиза'
