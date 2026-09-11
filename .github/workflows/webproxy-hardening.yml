@@ -22,6 +22,9 @@ jobs:
           grep -q 'wc -c < "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
           grep -q 'chmod 0400 "$TOKEN_KEY"' scripts/webproxy_update_hardening.sh
           grep -q 'atomic_replace_binary' scripts/webproxy_update_hardening.sh
+          ! grep -Eq 'local[[:space:]]+dir=.*dropin="\$dir' scripts/webproxy_update_hardening.sh
+          grep -q "local dir='/etc/systemd/system/tproxy-server.service.d'" scripts/webproxy_update_hardening.sh
+          grep -q 'local dropin="$dir/token-migration.conf"' scripts/webproxy_update_hardening.sh
           ! grep -Fq 'install -m 0755 -o root -g root "$backup" "$BINARY"' scripts/webproxy_update_hardening.sh
           ! grep -Fq 'install -m 0755 -o root -g root "$buildhome/tproxy-server.bin" "$BINARY"' scripts/webproxy_update_hardening.sh
           grep -q 'atomic_replace_binary' scripts/webproxy_telemetry_install.sh
